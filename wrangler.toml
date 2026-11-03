@@ -1,0 +1,27 @@
+# broker next: the collector-status home page as a static study (one Worker, no script: assets
+# from public/). The production hostname is declared here so a deploy of the default environment
+# moves broker.bgpkit.com onto this design; the preview environment carries its own Worker and
+# hostname so a change can be inspected first.
+name = "broker-next"
+compatibility_date = "2026-10-01"
+
+[assets]
+directory = "./public"
+
+[[routes]]
+pattern = "broker.bgpkit.com"
+custom_domain = true
+
+# Preview: same assets, separate Worker and hostname.
+[env.dev]
+name = "broker-next-dev"
+# workers.dev keeps the preview reachable even when a freshly created custom domain has not
+# propagated to every resolver yet.
+workers_dev = true
+
+[env.dev.assets]
+directory = "./public"
+
+[[env.dev.routes]]
+pattern = "dev.broker.bgpkit.com"
+custom_domain = true

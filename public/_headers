@@ -1,0 +1,5 @@
+# Assets are edited in place and deployed without a build step, so a long max-age strands
+# browsers on a stale app.js and the site keeps showing yesterday's numbers. Revalidate instead:
+# the ETag makes the repeat load a 304.
+/*
+  Cache-Control: public, max-age=0, must-revalidate
