@@ -2248,6 +2248,16 @@ function archiveWeeks(data) {
   });
 }
 
+
+/// Days for long waits, hours for short ones: "about 39 days to go" is a plan, "about 900 hours to
+/// go" is arithmetic.
+function etaLabel(hours) {
+  if (hours === null || hours === undefined || !Number.isFinite(hours)) return 'finish time unknown';
+  if (hours >= 48) return `about ${fmtInt(Math.round(hours / 24))} days to go`;
+  if (hours >= 1) return `about ${fmtInt(Math.round(hours))} hours to go`;
+  return 'finishing within the hour';
+}
+
 function archiveTooltip(week) {
   if (!week) return '';
   const span = `${dateOnly(week.first)}${week.last.getTime() === week.first.getTime() ? '' : ` – ${dateOnly(week.last)}`}`;
@@ -2278,8 +2288,26 @@ function renderArchive() {
   const expected = archive.data.files_expected.reduce((sum, value) => sum + value, 0);
   const done = archive.data.files_done.reduce((sum, value) => sum + value, 0);
   const percent = expected === 0 ? '0.0' : ((done / expected) * 100).toFixed(1);
+  // A finish estimate is only worth showing when it comes from measured samples. Until two
+  // samples are far enough apart, the line says so rather than guessing from the archive size.
+  const progress = archive.data.progress;
+  let pace = '';
+  let paceTitle = '';
+  if (progress) {
+    if (progress.files_per_hour) {
+      pace = ` · ${fmtInt(progress.files_per_hour)} files/hour · ${etaLabel(progress.eta_hours)}`;
+      paceTitle =
+        `rate measured over ${fmtInt(progress.measured_over_minutes)} minutes for ${ARCHIVE_LABEL[archive.project]}; ` +
+        `${fmtInt(progress.remaining)} files still to parse. The workers serve both projects from one queue, ` +
+        `so this is the time that project needs at the shared rate, not a separate finish date.`;
+    } else {
+      pace = ' · measuring the parse rate';
+      paceTitle = 'the rate needs two progress samples at least ten minutes apart';
+    }
+  }
   summary.textContent =
-    `${percent}% of ${fmtInt(expected)} files parsed · ${fmtInt(archive.data.meta.days)} days · ${ARCHIVE_LABEL[archive.project]}`;
+    `${percent}% of ${fmtInt(expected)} files parsed · ${fmtInt(archive.data.meta.days)} days · ${ARCHIVE_LABEL[archive.project]}${pace}`;
+  summary.title = paceTitle;
 
   const hover = el('span', { class: 'archive-hover' }, ['']);
   const nodes = rows.map((row) => {
