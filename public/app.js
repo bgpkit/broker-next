@@ -41,7 +41,6 @@ const SOURCE_LABEL = {
   series: 'parsed files',
   latest: 'latest files',
   peers: 'peer list',
-  ribCoverage: 'RIB history',
 };
 
 const HEALTH = {
@@ -1382,90 +1381,6 @@ function renderProjects() {
 
 /// Point-in-time on purpose: the ledger answers "what does the published RIB corpus hold right
 /// now", which is a different question from the selected window. Read once at boot.
-function renderRibCoverage() {
-  const host = $('#rib-body');
-  const src = $('#rib-src');
-  if (!host) return;
-
-  const source = state.sources.ribCoverage;
-  if (!source || source.error) {
-    if (src) src.textContent = 'RIB history · unavailable';
-    host.replaceChildren(el('div', { class: 'empty-state', text: 'RIB history unavailable' }));
-    return;
-  }
-
-  const rows = Array.isArray(source.data && source.data.data) ? source.data.data : [];
-  if (!rows.length) {
-    if (src) src.textContent = 'RIB history · no collector rows';
-    host.replaceChildren(el('div', { class: 'empty-state', text: 'The RIB history returned no collector rows.' }));
-    return;
-  }
-
-  const meta = (source.data && source.data.meta) || {};
-  // Ages are measured from the response's own generation time, so the figure does not drift with
-  // the browser clock and matches whatever else the response says about its snapshot.
-  const asOfMs = asUtc(meta.generated_at || source.at).getTime();
-  const nowMs = Number.isFinite(asOfMs) ? asOfMs : (source.at ? source.at.getTime() : Date.now());
-
-  // `latest` and `state` are independently nullable: a collector can carry a hot RIB and no
-  // publish history yet, or the reverse. Count both gaps out loud instead of dropping the row.
-  const hot = rows.filter((row) => row && row.latest).length;
-  const withState = rows.filter((row) => row && row.state);
-  const days = withState
-    .filter((row) => typeof row.state.newest_day === 'string' && row.state.newest_day)
-    .map((row) => ({ name: row.collector, day: row.state.newest_day }))
-    .sort((a, b) => b.day.localeCompare(a.day) || a.name.localeCompare(b.name));
-  const newestDay = days.length ? days[0].day : null;
-  const behind = newestDay ? days.filter((entry) => entry.day < newestDay) : [];
-
-  let publishMs = NaN;
-  for (const row of withState) {
-    const ms = asUtc(row.state.last_published_at).getTime();
-    if (Number.isFinite(ms) && (!Number.isFinite(publishMs) || ms > publishMs)) publishMs = ms;
-  }
-  const publishAgeMin = Number.isFinite(publishMs) ? Math.max(0, (nowMs - publishMs) / 60000) : null;
-
-  // The first figure counts the same thing the sentence below it lists the remainder of: collectors
-  // whose newest RIB is today's. A count of "collectors that have a RIB at all" reads as a
-  // contradiction next to "38 have no RIB for today", because both were true and neither said
-  // which question it answered.
-  const onNewest = newestDay ? days.filter((entry) => entry.day === newestDay).length : 0;
-  const stats = el('div', { class: 'mini-stats rib-stats' }, [
-    miniStat(`${fmtInt(onNewest)} / ${fmtInt(days.length)}`, newestDay ? `on ${dateOnly(newestDay)}` : 'on the newest day'),
-    miniStat(publishAgeMin === null ? '—' : `${fmtDuration(publishAgeMin * 60)} ago`, 'last RIB update'),
-    miniStat(`${fmtInt(withState.length)} / ${fmtInt(rows.length)}`, 'have a published RIB'),
-  ]);
-
-  const nodes = [stats];
-  if (behind.length) {
-    const shown = behind.slice(0, 6);
-    nodes.push(el('p', { class: 'rib-behind' }, [
-      el('span', { text: `the other ${fmtInt(behind.length)} still show ${dateOnly(behind[0].day)} or older: ` }),
-      el('span', { class: 'rib-names', text: shown.map((entry) => `${entry.name} ${dayLabel(entry.day)}`).join(', ') }),
-      behind.length > shown.length
-        ? el('span', { class: 'rib-more', text: ` +${fmtInt(behind.length - shown.length)} more` })
-        : null,
-    ]));
-    nodes.push(el('p', { class: 'rib-note', text: 'a day\'s RIBs are published through the day, so most collectors show the previous day until their first dump of the new one arrives' }));
-  } else if (newestDay) {
-    nodes.push(el('p', { class: 'rib-behind', text: `every collector has published a ${dateOnly(newestDay)} RIB` }));
-  } else {
-    nodes.push(el('p', { class: 'rib-behind', text: 'no RIB has been published yet' }));
-  }
-
-  const gaps = [];
-  if (hot < rows.length) gaps.push(`${fmtInt(rows.length - hot)} without any RIB`);
-  if (withState.length < rows.length) gaps.push(`${fmtInt(rows.length - withState.length)} without published RIB history`);
-  if (gaps.length) {
-    nodes.push(el('p', { class: 'rib-note', text: `${gaps.join(' · ')} · counted, listed anyway` }));
-  }
-
-  if (src) {
-    src.textContent = `RIB history · ${fmtInt(rows.length)} collectors · as of ${stamp(meta.generated_at || source.at)}`;
-  }
-  host.replaceChildren(...nodes);
-}
-
 function renderAlerts() {
   const box = $('#alerts');
   const failures = Object.values(state.sources).filter((source) => source && source.error);
@@ -2450,8 +2365,6 @@ async function boot() {
     healthSpec(),
     ...windowSpecs(state.window),
     { key: 'latest', path: '/v4/mrt/collectors/latest', params: {} },
-    // Point-in-time ledger coverage; not window-scoped, so it is fetched once per page load.
-    { key: 'ribCoverage', path: '/v4/mrt/collectors/rib-coverage', params: {} },
   ];
 
   const results = await Promise.all(specs.map(loadSource));
@@ -2465,7 +2378,6 @@ async function boot() {
   renderStrip();
   renderFleetChart();
   renderProjects();
-  renderRibCoverage();
   renderControls();
   renderAlerts();
   renderGrid();

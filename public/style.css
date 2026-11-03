@@ -955,13 +955,6 @@ col.rf-open { width: 10%; }
 
 /* RIB coverage: a compact ledger strip under the volume chart. Three figures then one line of
    names, so the panel stays as short as the project cards beside it. */
-.rib-body { padding: 10px 14px 12px; display: grid; gap: 7px; }
-.rib-body .loading { height: 46px; }
-.rib-stats { margin-bottom: 0; grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.rib-behind { font: 9.5px/1.5 var(--mono); color: var(--muted); overflow-wrap: anywhere; }
-.rib-names { color: var(--ink-2); }
-.rib-more { color: var(--faint); }
-.rib-note { font: 8.5px/1.5 var(--mono); color: var(--faint); }
 .latest-panel { margin-top: 14px; }
 .table-wrap { overflow-x: auto; padding: 6px 14px 12px; }
 .latest-table { width: 100%; border-collapse: collapse; font: 11.5px var(--mono); }
