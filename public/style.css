@@ -1154,3 +1154,117 @@ col.rf-open { width: 10%; }
 
 .attention-item { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; }
 .attention-item .dot { margin-top: -1px; }
+
+/* ---------- archive coverage (year × week calendar of what has been parsed) ---------- */
+
+.archive-panel { margin-top: 14px; }
+
+.archive-body { padding: 10px 14px 12px; }
+
+.archive-summary {
+  font: 11px var(--mono);
+  color: var(--ink-2);
+}
+
+.archive-note {
+  margin-top: 3px;
+  font: 10px var(--mono);
+  color: var(--faint);
+  max-width: 78ch;
+}
+
+.archive-grid {
+  margin-top: 10px;
+  display: grid;
+  gap: 2px;
+}
+
+.archive-row {
+  display: grid;
+  grid-template-columns: 34px 1fr;
+  gap: 8px;
+  align-items: center;
+}
+
+.archive-year {
+  font: 9px var(--mono);
+  color: var(--faint);
+  text-align: right;
+}
+
+.archive-weeks {
+  display: grid;
+  grid-template-columns: repeat(53, minmax(0, 1fr));
+  gap: 2px;
+}
+
+/* Height follows width so the calendar keeps its proportions at any page width. */
+.archive-cell {
+  aspect-ratio: 1;
+  border-radius: 1px;
+  background: var(--panel-sunk);
+}
+
+.archive-cell[data-level="none"] { background: var(--panel-sunk); }
+.archive-cell[data-level="0"] { background: #e6ece5; }
+.archive-cell[data-level="1"] { background: #b4cabd; }
+.archive-cell[data-level="2"] { background: #7aa694; }
+.archive-cell[data-level="3"] { background: #417e68; }
+.archive-cell[data-level="4"] { background: var(--accent); }
+
+.archive-legend {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  font: 9px var(--mono);
+  color: var(--faint);
+}
+
+.archive-legend .swatch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.archive-legend .chip {
+  width: 9px;
+  height: 9px;
+  border-radius: 1px;
+  display: inline-block;
+  background: var(--panel-sunk);
+}
+
+/* The legend chips wear the same levels as the cells; one set of colours, no second palette. */
+.archive-legend .chip[data-level="0"] { background: #e6ece5; }
+.archive-legend .chip[data-level="1"] { background: #b4cabd; }
+.archive-legend .chip[data-level="2"] { background: #7aa694; }
+.archive-legend .chip[data-level="3"] { background: #417e68; }
+.archive-legend .chip[data-level="4"] { background: var(--accent); }
+
+.project-switch {
+  display: inline-flex;
+  border: 1px solid var(--rule-2);
+}
+
+.project-switch button {
+  font: 9px var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  color: var(--muted);
+}
+
+.project-switch button + button { border-left: 1px solid var(--rule-2); }
+
+.project-switch button.is-active {
+  background: var(--ink);
+  color: var(--panel);
+}
+
+.archive-hover {
+  min-height: 12px;
+  font: 9px var(--mono);
+  color: var(--ink-2);
+}

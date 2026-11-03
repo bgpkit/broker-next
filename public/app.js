@@ -2255,6 +2255,180 @@ function windowSpecs(key) {
   ];
 }
 
+
+/* ---------- archive coverage ---------- */
+
+/// Which project's archive calendar is on screen. Independent of the fleet window: the calendar is
+/// the whole history, not the last 24 hours, so switching the window must not reload it.
+const archive = { project: 'ripe-ris', data: null, error: null, at: null };
+
+const ARCHIVE_LABEL = {
+  'ripe-ris': 'RIPE RIS',
+  'route-views': 'RouteViews',
+};
+
+/// Five bands plus "no files that week". The band is the ratio of parsed files to the files the
+/// archive holds, never the absolute count: a quiet week in 2003 and a busy one this month have to
+/// compare by what fraction of their own files arrived.
+function archiveLevel(week) {
+  if (!week || week.expected === 0) return 'none';
+  const ratio = week.done / week.expected;
+  if (ratio <= 0) return '0';
+  if (ratio < 0.5) return '1';
+  if (ratio < 0.9) return '2';
+  if (ratio < 1) return '3';
+  return '4';
+}
+
+/// Day N of the series is `start + N days`; the API sends the date once because the series is
+/// dense, so this is the only place that turns an index back into a calendar week.
+function archiveWeeks(data) {
+  if (!data || !data.start || !data.files_expected) return [];
+  const startMs = Date.parse(`${data.start}T00:00:00Z`);
+  const byYear = new Map();
+  for (let index = 0; index < data.files_expected.length; index += 1) {
+    const expected = data.files_expected[index] || 0;
+    const done = data.files_done[index] || 0;
+    const date = new Date(startMs + index * 86400000);
+    const year = date.getUTCFullYear();
+    const week = Math.floor((date.getTime() - Date.UTC(year, 0, 1)) / 86400000 / 7);
+    let weeks = byYear.get(year);
+    if (!weeks) {
+      weeks = new Map();
+      byYear.set(year, weeks);
+    }
+    let bucket = weeks.get(week);
+    if (!bucket) {
+      bucket = {
+        year,
+        week,
+        first: date,
+        last: date,
+        expected: 0,
+        done: 0,
+        collectorsExpected: 0,
+        collectorsDone: 0,
+      };
+      weeks.set(week, bucket);
+    }
+    bucket.last = date;
+    bucket.expected += expected;
+    bucket.done += done;
+    if (data.collectors_expected && data.collectors_done) {
+      bucket.collectorsExpected = Math.max(bucket.collectorsExpected, data.collectors_expected[index] || 0);
+      bucket.collectorsDone = Math.max(bucket.collectorsDone, data.collectors_done[index] || 0);
+    }
+  }
+  return [...byYear.keys()].sort((a, b) => a - b).map((year) => {
+    const weeks = byYear.get(year);
+    const row = new Array(53).fill(null);
+    for (const [week, bucket] of weeks) if (week >= 0 && week < 53) row[week] = bucket;
+    return { year, weeks: row };
+  });
+}
+
+function archiveTooltip(week) {
+  if (!week) return '';
+  const span = `${dateOnly(week.first)}${week.last.getTime() === week.first.getTime() ? '' : ` – ${dateOnly(week.last)}`}`;
+  if (week.expected === 0) return `${span} · no files in the archive`;
+  const percent = ((week.done / week.expected) * 100).toFixed(1);
+  const collectors = week.collectorsExpected
+    ? ` · ${week.collectorsDone}/${week.collectorsExpected} collectors complete`
+    : '';
+  return `${span} · ${percent}% parsed (${fmtInt(week.done)} / ${fmtInt(week.expected)} files)${collectors}`;
+}
+
+function renderArchive() {
+  const grid = $('#archive-grid');
+  const summary = $('#archive-summary');
+  const legend = $('#archive-legend');
+  const src = $('#archive-src');
+  if (!grid) return;
+
+  if (archive.error || !archive.data) {
+    grid.replaceChildren();
+    grid.setAttribute('aria-busy', 'false');
+    summary.textContent = archive.error ? `archive calendar unavailable: ${archive.error}` : 'archive calendar · waiting';
+    if (src) src.textContent = 'archive calendar · unavailable';
+    return;
+  }
+
+  const rows = archiveWeeks(archive.data);
+  const expected = archive.data.files_expected.reduce((sum, value) => sum + value, 0);
+  const done = archive.data.files_done.reduce((sum, value) => sum + value, 0);
+  const percent = expected === 0 ? '0.0' : ((done / expected) * 100).toFixed(1);
+  summary.textContent =
+    `${percent}% of ${fmtInt(expected)} files parsed · ${fmtInt(archive.data.meta.days)} days · ${ARCHIVE_LABEL[archive.project]}`;
+
+  const hover = el('span', { class: 'archive-hover' }, ['']);
+  const nodes = rows.map((row) => {
+    const cells = row.weeks.map((week) => {
+      const cell = el('div', { class: 'archive-cell' });
+      cell.dataset.level = archiveLevel(week);
+      const text = archiveTooltip(week);
+      if (text) {
+        cell.title = text;
+        cell.addEventListener('mouseenter', () => { hover.textContent = text; });
+      }
+      return cell;
+    });
+    return el('div', { class: 'archive-row' }, [
+      el('span', { class: 'archive-year' }, [String(row.year)]),
+      el('div', { class: 'archive-weeks' }, cells),
+    ]);
+  });
+  grid.replaceChildren(...nodes);
+  grid.setAttribute('aria-busy', 'false');
+
+  const chips = [
+    ['none', 'no files'],
+    ['0', 'none parsed'],
+    ['1', 'under 50%'],
+    ['2', 'under 90%'],
+    ['3', 'under 100%'],
+    ['4', 'complete'],
+  ].map(([level, label]) => {
+    const chip = el('span', { class: 'chip' });
+    chip.dataset.level = level;
+    return el('span', { class: 'swatch' }, [chip, el('span', {}, [label])]);
+  });
+  legend.replaceChildren(...chips, hover);
+
+  if (src) {
+    const when = archive.data.meta && archive.data.meta.refreshed_at ? dateOnly(new Date(archive.data.meta.refreshed_at)) : 'unknown';
+    src.textContent = `archive calendar · ${fmtInt(archive.data.meta.days)} days · refreshed ${when}`;
+  }
+}
+
+async function loadArchive() {
+  const grid = $('#archive-grid');
+  if (grid) grid.setAttribute('aria-busy', 'true');
+  try {
+    const data = await api('/v4/mrt/coverage', { project: archive.project });
+    archive.data = data;
+    archive.error = null;
+    archive.at = new Date();
+  } catch (error) {
+    archive.data = null;
+    archive.error = error && error.message ? error.message : String(error);
+  }
+  renderArchive();
+}
+
+function wireArchive() {
+  const group = $('#archive-projects');
+  if (!group) return;
+  group.addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-project]');
+    if (!button || button.dataset.project === archive.project) return;
+    archive.project = button.dataset.project;
+    for (const node of group.querySelectorAll('button')) {
+      node.classList.toggle('is-active', node.dataset.project === archive.project);
+    }
+    void loadArchive();
+  });
+}
+
 async function boot() {
   closeDetail(true);
   state.sources = {};
@@ -2294,6 +2468,9 @@ async function boot() {
   $('#grid').setAttribute('aria-busy', 'false');
   openFromHash();
 }
+
+wireArchive();
+void loadArchive();
 
 /// The lag figure comes from the file feed, not from the file index, so it survives a window
 /// switch: renderHeader resets the cell to "loading", this puts the value back.
