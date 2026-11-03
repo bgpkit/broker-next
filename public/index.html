@@ -10,7 +10,7 @@
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="icon" type="image/png" sizes="192x192" href="/favicon.png">
   <link rel="apple-touch-icon" href="/favicon.png">
-  <link rel="stylesheet" href="style.css?v=202611030120">
+  <link rel="stylesheet" href="style.css?v=202611030140">
 </head>
 <body>
   <a class="skip-link" href="#grid">Skip to collectors</a>
@@ -19,7 +19,7 @@
     <header class="masthead">
       <div class="meta-row">
         <span>BGPKIT Broker</span>
-        <span>collector inventory <span class="slash">/</span> file delivery</span>
+        <span>route collectors <span class="slash">/</span> file delivery</span>
       </div>
 
       <div class="masthead-main">
@@ -47,12 +47,12 @@
 
       <section class="kpis" id="kpis" aria-label="Fleet key figures">
         <article class="kpi">
-          <p class="kpi-label">in catalog</p>
+          <p class="kpi-label">collectors tracked</p>
           <p class="kpi-value" id="kpi-catalog">—</p>
-          <p class="kpi-meta" id="kpi-catalog-meta">collector catalog</p>
+          <p class="kpi-meta" id="kpi-catalog-meta">from the collector catalog</p>
         </article>
         <article class="kpi">
-          <p class="kpi-label" id="kpi-reporting-label">with files</p>
+          <p class="kpi-label" id="kpi-reporting-label">sent files</p>
           <p class="kpi-value" id="kpi-reporting">—</p>
           <p class="kpi-meta" id="kpi-reporting-meta">file index</p>
         </article>
@@ -62,19 +62,19 @@
           <p class="kpi-meta" id="kpi-files-meta">file index</p>
         </article>
         <article class="kpi">
-          <p class="kpi-label" id="kpi-elements-label">messages</p>
+          <p class="kpi-label" id="kpi-elements-label">bgp messages</p>
           <p class="kpi-value" id="kpi-elements">—</p>
           <p class="kpi-meta" id="kpi-elements-meta">file index</p>
         </article>
         <article class="kpi">
-          <p class="kpi-label">median lag</p>
+          <p class="kpi-label">median file delay</p>
           <p class="kpi-value" id="kpi-lag">…</p>
-          <p class="kpi-meta" id="kpi-lag-meta">file feed · loading</p>
+          <p class="kpi-meta" id="kpi-lag-meta">latest files · loading</p>
         </article>
       </section>
 
       <div class="strip">
-        <span class="strip-label">fleet strip</span>
+        <span class="strip-label">status mix</span>
         <svg class="strip-svg" id="strip" viewBox="0 0 1000 18" preserveAspectRatio="none" aria-hidden="true" focusable="false"></svg>
         <span class="strip-legend" id="strip-legend"></span>
       </div>
@@ -90,12 +90,12 @@
             <div class="panel-head">
               <h2 id="throughput-title">Fleet volume · last 24h</h2>
               <div class="metric-switch" id="chart-metrics" role="group" aria-label="Chart metric">
-                <button type="button" data-metric="elements" class="is-active">messages</button>
+                <button type="button" data-metric="elements" class="is-active">bgp messages</button>
                 <button type="button" data-metric="files">files</button>
-                <button type="button" data-metric="bytes">uncompressed</button>
-                <button type="button" data-metric="p95">parse p95</button>
+                <button type="button" data-metric="bytes">size (uncompressed)</button>
+                <button type="button" data-metric="p95">parse time p95</button>
               </div>
-              <p class="src" id="fleet-src">file processing index · waiting</p>
+              <p class="src" id="fleet-src">parsed files · waiting</p>
             </div>
             <svg class="fleet-chart" id="fleet-chart" viewBox="0 0 720 200" role="img"
                  aria-label="Messages per hour across the fleet, split by project"></svg>
@@ -103,8 +103,8 @@
           </div>
           <section class="panel rib-panel" aria-labelledby="rib-title">
             <div class="panel-head">
-              <h2 id="rib-title">RIB coverage</h2>
-              <p class="src" id="rib-src">RIB ledger · waiting</p>
+              <h2 id="rib-title">RIB snapshots</h2>
+              <p class="src" id="rib-src">snapshot history · waiting</p>
             </div>
             <div class="rib-body" id="rib-body">
               <div class="loading">fetching</div>
@@ -113,8 +113,8 @@
         </div>
         <div class="panel projects-panel">
           <div class="panel-head">
-            <h2>Projects</h2>
-            <p class="src">collector catalog + file processing index</p>
+            <h2>Per project</h2>
+            <p class="src">collectors tracked · files parsed in the window</p>
           </div>
           <div class="project-cards" id="project-cards"></div>
         </div>
@@ -153,7 +153,7 @@
             <select id="f-country"></select>
           </div>
           <div class="field">
-            <label for="f-health">health</label>
+            <label for="f-health">status</label>
             <select id="f-health"></select>
           </div>
           <div class="field">
@@ -162,7 +162,7 @@
           </div>
           <label class="check" for="f-deprecated">
             <input id="f-deprecated" type="checkbox">
-            <span>show deprecated</span>
+            <span>show deactivated</span>
           </label>
           <button class="reset" id="f-reset" type="button">reset</button>
           <p class="count" id="count" aria-live="polite">—</p>
@@ -172,13 +172,13 @@
       <section class="collectors" aria-labelledby="fleet-title">
         <div class="fleet-head">
           <h2 id="fleet-title">Collectors</h2>
-          <p class="fleet-note">health judged on the last 24h · sorted inside each project</p>
+          <p class="fleet-note">status from the last 24 hours · grouped by project</p>
           <span class="legend">
             <span class="leg" title="files are arriving on schedule"><span class="dot" data-health="ok"></span>ok</span>
             <span class="leg" title="newest file is later than twice the publication cadence"><span class="dot" data-health="late"></span>late</span>
             <span class="leg" title="no file arrived in the last 24 hours"><span class="dot" data-health="nofiles"></span>no files</span>
-            <span class="leg" title="publishes the same files as another collector under its pre-rename archive path"><span class="dot" data-health="alias"></span>alias</span>
-            <span class="leg" title="in the catalog but not yet crawled, so no file is expected"><span class="dot" data-health="pending"></span>pending</span>
+            <span class="leg" title="an old collector name that still publishes the same files as another collector, so its files are counted twice"><span class="dot" data-health="alias"></span>duplicate</span>
+            <span class="leg" title="in the catalog but never fetched, so no file is expected yet"><span class="dot" data-health="pending"></span>not fetched</span>
             <span class="leg" title="the catalog marks this collector deactivated"><span class="dot" data-health="retired"></span>deactivated</span>
           </span>
         </div>
@@ -207,6 +207,6 @@
     <p class="drawer-foot">links open the upstream archive, not this site</p>
   </aside>
 
-  <script type="module" src="app.js?v=202611030120"></script>
+  <script type="module" src="app.js?v=202611030140"></script>
 </body>
 </html>

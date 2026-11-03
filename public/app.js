@@ -35,22 +35,22 @@ const STALE_SLACK = { updates: 15, rib: 30 };
 /// Plain-language names for the responses this page reads. Never show an API path.
 const SOURCE_LABEL = {
   catalog: 'collector catalog',
-  processed: 'file processing index',
-  aggregates: 'file processing index',
-  health: 'file processing index',
-  series: 'file processing index',
-  latest: 'file feed',
+  processed: 'parsed files',
+  aggregates: 'parsed files',
+  health: 'parsed files',
+  series: 'parsed files',
+  latest: 'latest files',
   peers: 'peer list',
-  ribCoverage: 'RIB ledger',
+  ribCoverage: 'RIB history',
 };
 
 const HEALTH = {
-  pending: { label: 'pending', rank: 8 },
+  pending: { label: 'not fetched', rank: 8 },
   nofiles: { label: 'no files', rank: 0 },
   partial: { label: 'partial', rank: 1 },
   late: { label: 'late', rank: 2 },
-  legacy: { label: 'legacy name', rank: 4 },
-  alias: { label: 'alias', rank: 7.5 },
+  legacy: { label: 'old name', rank: 4 },
+  alias: { label: 'duplicate', rank: 7.5 },
   ok: { label: 'ok', rank: 7 },
   retired: { label: 'deactivated', rank: 9 },
 };
@@ -641,7 +641,7 @@ function renderHeader() {
   setKpi(
     'reporting',
     Number.isFinite(processedCount) ? fmtInt(processedCount) : '—',
-    aggregates ? `${spec.label} · file index` : 'file index · unavailable',
+    aggregates ? `${spec.label} · parsed files` : 'parsed files · unavailable',
     `collectors with at least one file in the last ${spec.label}`
   );
 
@@ -649,7 +649,7 @@ function renderHeader() {
   setKpi(
     'files',
     files === null ? '—' : fmtInt(files),
-    aggregates ? `${spec.label} · file index` : 'file index · unavailable',
+    aggregates ? `${spec.label} · parsed files` : 'parsed files · unavailable',
     `files received in the last ${spec.label}`
   );
 
@@ -660,7 +660,7 @@ function renderHeader() {
   setKpi(
     'elements',
     elementsTotal === null ? '—' : fmtCompact(elementsTotal),
-    series ? `${spec.label} · file index` : 'file index · unavailable',
+    series ? `${spec.label} · parsed files` : 'parsed files · unavailable',
     `BGP messages parsed from the update files in the last ${spec.label} (announcements and withdrawals)`
   );
 
@@ -727,9 +727,9 @@ function renderAttention(counts) {
     return;
   }
   host.hidden = false;
-  host.setAttribute('aria-label', `attention: ${rows.map((health) => `${HEALTH[health].label} ${fmtInt(counts[health])}`).join(', ')}`);
+  host.setAttribute('aria-label', `status: ${rows.map((health) => `${HEALTH[health].label} ${fmtInt(counts[health])}`).join(', ')}`);
   host.replaceChildren(
-    el('span', { class: 'attention-label', text: 'attention' }),
+    el('span', { class: 'attention-label', text: 'needs a look' }),
     ...rows.flatMap((health) => [
       el('button', {
         class: 'attention-item',
@@ -835,7 +835,7 @@ function tileEl(tile) {
         tile.health === 'retired'
           ? `${tile.project || 'collector'} · deactivated ${dateOnly(tile.deactivated)}`
           : tile.health === 'alias'
-            ? `alias of ${tile.alias}`
+            ? `same files as ${tile.alias}`
             : tile.health === 'legacy'
               ? 'publishes files under a name the catalog does not list'
               : tile.project
@@ -846,7 +846,7 @@ function tileEl(tile) {
       stat(tile.filesWin === null ? null : fmtInt(tile.filesWin), 'files', `files received in the last ${spec.label}`, false),
       stat(
         tile.elementsWin ? fmtCompact(tile.elementsWin) : tile.filesWin === 0 ? '0' : null,
-        'messages',
+        'bgp messages',
         `BGP messages parsed from this collector in the last ${spec.label} (each announcement or withdrawal counts once)`,
       ),
       stat(
@@ -859,9 +859,9 @@ function tileEl(tile) {
   if (chip) children.push(chip);
   children.push(el('span', {
     class: 'tile-ages',
-    title: 'newest updates file / newest RIB file, measured against the publication cadence',
+    title: 'age of the newest updates file and the newest RIB file',
   }, [
-    el('span', { text: `${shortAge(tile.updateAgeMin)} / ${shortAge(tile.ribAgeMin)}` }),
+    el('span', { text: `updates ${shortAge(tile.updateAgeMin)} · RIB ${shortAge(tile.ribAgeMin)}` }),
   ]));
   const props = {
     class: 'tile',
@@ -938,7 +938,7 @@ function renderGrid() {
   const sourceLine = $('#grid-src');
   const failures = Object.values(state.sources).filter((source) => source && source.error);
   const spec = windowSpec();
-  sourceLine.textContent = `${spec.label} window · health on the last ${HEALTH_HOURS}h${failures.length ? ' · partial' : ''}`;
+  sourceLine.textContent = `${spec.label} window · status from the last ${HEALTH_HOURS}h${failures.length ? ' · partial' : ''}`;
 
   const list = filteredTiles();
 
@@ -970,7 +970,7 @@ function renderGrid() {
       el('div', { class: 'project-col-head' }, [
         el('h3', { text: group.label }),
         el('span', {
-          text: `${fmtInt(group.tiles.length)} shown of ${fmtInt(projectTotal(group.project))} in catalog`,
+          text: `${fmtInt(group.tiles.length)} shown of ${fmtInt(projectTotal(group.project))} tracked`,
           title: 'collectors shown of collectors in this project',
         }),
       ]),
@@ -1070,7 +1070,7 @@ const FAIL_COLOR = '#a02517';
 /// fourth is parse-time p95, which only /v4/mrt/distributions answers and costs one fetch per
 /// window. Switching between them does not refetch.
 const CHART_METRICS = {
-  elements: { label: 'messages', pick: (b, p) => (p === 'ris' ? b.ris : b.rv), fmt: fmtCompact },
+  elements: { label: 'BGP messages', pick: (b, p) => (p === 'ris' ? b.ris : b.rv), fmt: fmtCompact },
   files: { label: 'files', pick: (b, p) => (p === 'ris' ? b.risFiles : b.rvFiles), fmt: (v) => fmtInt(Math.round(v)) },
   bytes: { label: 'uncompressed', pick: (b, p) => (p === 'ris' ? b.risBytes : b.rvBytes), fmt: fmtBytes },
   p95: {
@@ -1101,7 +1101,7 @@ function renderFleetChart() {
     if (src) src.textContent = message;
     if (legend) legend.replaceChildren();
   };
-  if (!source || source.error) return empty('file index · unavailable');
+  if (!source || source.error) return empty('parsed files · unavailable');
 
   // One point per bucket per project. Volume is the interesting signal: files follow a fixed
   // cadence, while the announcements and withdrawals they carry move with routing activity.
@@ -1149,7 +1149,7 @@ function renderFleetChart() {
   }
 
   const buckets = [...byBucket.values()].sort((a, b) => a.t.localeCompare(b.t));
-  if (!buckets.length) return empty('file index · no rows in the window');
+  if (!buckets.length) return empty('parsed files · no rows in the window');
 
   const W = 720;
   const H = 200;
@@ -1298,7 +1298,7 @@ function renderFleetChart() {
   hit.addEventListener('pointercancel', clear);
 
   if (src) {
-    src.textContent = `file index · ${metric.label} per ${spec.unit} · ${buckets.length} ${spec.bucketNoun} buckets · as of ${stamp(source.at)}`;
+    src.textContent = `parsed files · ${metric.label} per ${spec.unit} · ${buckets.length} ${spec.bucketNoun} buckets · as of ${stamp(source.at)}`;
   }
   const title = $('#throughput-title');
   if (title) title.textContent = `Fleet volume · last ${spec.label}`;
@@ -1359,18 +1359,18 @@ function renderProjects() {
         ]),
         el('div', { class: 'project-row' }, [
           el('span', { class: 'project-k', text: 'collectors' }),
-          el('span', { class: 'project-v', text: `${fmtInt(active)} active · ${fmtInt(inCatalog.length)} in catalog` }),
+          el('span', { class: 'project-v', text: `${fmtInt(active)} sending files · ${fmtInt(inCatalog.length)} tracked` }),
         ]),
         el('div', { class: 'project-row' }, [
           el('span', { class: 'project-k', text: `files ${spec.label}` }),
           el('span', { class: 'project-v', text: fmtInt(files) }),
         ]),
         el('div', { class: 'project-row' }, [
-          el('span', { class: 'project-k', text: `messages ${spec.label}` }),
+          el('span', { class: 'project-k', text: `bgp messages ${spec.label}` }),
           el('span', { class: 'project-v', text: fmtCompact(elements) }),
         ]),
         el('div', { class: 'project-row' }, [
-          el('span', { class: 'project-k', text: `uncompressed ${spec.label}` }),
+          el('span', { class: 'project-k', text: `size ${spec.label}` }),
           el('span', { class: 'project-v', text: fmtBytes(bytes) }),
         ]),
       ]);
@@ -1389,15 +1389,15 @@ function renderRibCoverage() {
 
   const source = state.sources.ribCoverage;
   if (!source || source.error) {
-    if (src) src.textContent = 'RIB ledger · unavailable';
-    host.replaceChildren(el('div', { class: 'empty-state', text: 'RIB ledger unavailable' }));
+    if (src) src.textContent = 'RIB history · unavailable';
+    host.replaceChildren(el('div', { class: 'empty-state', text: 'RIB history unavailable' }));
     return;
   }
 
   const rows = Array.isArray(source.data && source.data.data) ? source.data.data : [];
   if (!rows.length) {
-    if (src) src.textContent = 'RIB ledger · no collector rows';
-    host.replaceChildren(el('div', { class: 'empty-state', text: 'The RIB ledger returned no collector rows.' }));
+    if (src) src.textContent = 'RIB history · no collector rows';
+    host.replaceChildren(el('div', { class: 'empty-state', text: 'The RIB history returned no collector rows.' }));
     return;
   }
 
@@ -1426,36 +1426,37 @@ function renderRibCoverage() {
   const publishAgeMin = Number.isFinite(publishMs) ? Math.max(0, (nowMs - publishMs) / 60000) : null;
 
   const stats = el('div', { class: 'mini-stats rib-stats' }, [
-    miniStat(`${fmtInt(hot)} / ${fmtInt(rows.length)}`, 'with a hot RIB'),
-    miniStat(newestDay ? dateOnly(newestDay) : '—', 'ledger reaches'),
-    miniStat(publishAgeMin === null ? '—' : `${fmtDuration(publishAgeMin * 60)} ago`, 'last publish'),
+    miniStat(`${fmtInt(hot)} / ${fmtInt(rows.length)}`, 'have a current RIB'),
+    miniStat(newestDay ? dateOnly(newestDay) : '—', 'newest RIB'),
+    miniStat(publishAgeMin === null ? '—' : `${fmtDuration(publishAgeMin * 60)} ago`, 'last RIB update'),
   ]);
 
   const nodes = [stats];
   if (behind.length) {
     const shown = behind.slice(0, 6);
     nodes.push(el('p', { class: 'rib-behind' }, [
-      el('span', { text: `${fmtInt(behind.length)} of ${fmtInt(days.length)} collectors are behind ${dateOnly(newestDay)}: ` }),
+      el('span', { text: `${fmtInt(behind.length)} of ${fmtInt(days.length)} collectors have no ${dateOnly(newestDay)} RIB yet: ` }),
       el('span', { class: 'rib-names', text: shown.map((entry) => `${entry.name} ${dayLabel(entry.day)}`).join(', ') }),
       behind.length > shown.length
         ? el('span', { class: 'rib-more', text: ` +${fmtInt(behind.length - shown.length)} more` })
         : null,
     ]));
+    nodes.push(el('p', { class: 'rib-note', text: 'a day\'s RIBs are published through the day, so most collectors show the previous day until their first dump of the new one arrives' }));
   } else if (newestDay) {
-    nodes.push(el('p', { class: 'rib-behind', text: `every collector with a published RIB reaches ${dateOnly(newestDay)}` }));
+    nodes.push(el('p', { class: 'rib-behind', text: `every collector has a ${dateOnly(newestDay)} RIB` }));
   } else {
-    nodes.push(el('p', { class: 'rib-behind', text: 'no publish day in the ledger' }));
+    nodes.push(el('p', { class: 'rib-behind', text: 'no RIB has been published yet' }));
   }
 
   const gaps = [];
-  if (hot < rows.length) gaps.push(`${fmtInt(rows.length - hot)} without a hot RIB`);
-  if (withState.length < rows.length) gaps.push(`${fmtInt(rows.length - withState.length)} without published-rib history`);
+  if (hot < rows.length) gaps.push(`${fmtInt(rows.length - hot)} without a current RIB`);
+  if (withState.length < rows.length) gaps.push(`${fmtInt(rows.length - withState.length)} without published RIB history`);
   if (gaps.length) {
-    nodes.push(el('p', { class: 'rib-note', text: `${gaps.join(' · ')} · counted, not dropped` }));
+    nodes.push(el('p', { class: 'rib-note', text: `${gaps.join(' · ')} · counted, listed anyway` }));
   }
 
   if (src) {
-    src.textContent = `RIB ledger · ${fmtInt(rows.length)} collectors · as of ${stamp(meta.generated_at || source.at)}`;
+    src.textContent = `RIB history · ${fmtInt(rows.length)} collectors · as of ${stamp(meta.generated_at || source.at)}`;
   }
   host.replaceChildren(...nodes);
 }
@@ -1604,7 +1605,7 @@ function statusNode(tile) {
     pending: `in the catalog since ${tile.activated ? dateOnly(tile.activated) : 'recently'}, no archive file yet`,
     nofiles: tile.inCatalog ? 'in the catalog, but no file in the last 24h' : 'no file in the last 24h',
     legacy: 'publishes files under a name the catalog does not list, usually a rename',
-    alias: tile.alias ? `same files as ${tile.alias}, published under the pre-rename path` : 'alias of another collector',
+    alias: tile.alias ? `same files as ${tile.alias}, published under the pre-rename path` : 'same files as another collector',
     retired: tile.deactivated ? `deactivated ${dateOnly(tile.deactivated)} in the catalog` : 'deactivated',
   };
   return el('span', { class: 'status' }, [
@@ -1625,7 +1626,7 @@ function identitySection(tile) {
   sectionRef.src.textContent = tile.inCatalog
     ? 'collector catalog · catalog record'
     : tile.alias
-      ? `catalog has no entry · alias of ${tile.alias}`
+      ? `not in the catalog · same files as ${tile.alias}`
       : 'collector catalog · no record for this name';
 
   const rows = [
@@ -1637,7 +1638,7 @@ function identitySection(tile) {
   if (tile.deactivated) rows.push(kvRow('deactivated', dateOnly(tile.deactivated)));
 
   const archive = el('p', { class: 'archive' }, [
-    el('span', { class: 'kv-label', text: tile.inCatalog ? 'archive root' : tile.alias ? `archive root · alias of ${tile.alias}` : 'archive root · not in catalog' }),
+    el('span', { class: 'kv-label', text: tile.inCatalog ? 'archive root' : tile.alias ? `archive root · same files as ${tile.alias}` : 'archive root · not in catalog' }),
     tile.dataUrl ? safeLink(tile.dataUrl, tile.dataUrl) : el('span', { class: 'muted', text: '—' }),
   ]);
 
@@ -1760,11 +1761,11 @@ function renderPeers(target, data, name, at) {
       el('col', { class: 'c-conn' }),
     ]),
     el('thead', {}, el('tr', {}, [
-      el('th', { scope: 'col', text: 'peer ip' }),
+      el('th', { scope: 'col', text: 'peer IP' }),
       el('th', { scope: 'col', text: 'asn' }),
-      el('th', { scope: 'col', class: 'num', text: 'v4 pfxs' }),
-      el('th', { scope: 'col', class: 'num', text: 'v6 pfxs' }),
-      el('th', { scope: 'col', class: 'num', text: 'conn. asns' }),
+      el('th', { scope: 'col', class: 'num', text: 'IPv4 prefixes' }),
+      el('th', { scope: 'col', class: 'num', text: 'IPv6 prefixes' }),
+      el('th', { scope: 'col', class: 'num', text: 'ASNs connected' }),
     ])),
   ]);
 
