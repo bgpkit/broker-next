@@ -1425,17 +1425,22 @@ function renderRibCoverage() {
   }
   const publishAgeMin = Number.isFinite(publishMs) ? Math.max(0, (nowMs - publishMs) / 60000) : null;
 
+  // The first figure counts the same thing the sentence below it lists the remainder of: collectors
+  // whose newest RIB is today's. A count of "collectors that have a RIB at all" reads as a
+  // contradiction next to "38 have no RIB for today", because both were true and neither said
+  // which question it answered.
+  const onNewest = newestDay ? days.filter((entry) => entry.day === newestDay).length : 0;
   const stats = el('div', { class: 'mini-stats rib-stats' }, [
-    miniStat(`${fmtInt(hot)} / ${fmtInt(rows.length)}`, 'have a current RIB'),
-    miniStat(newestDay ? dateOnly(newestDay) : '—', 'newest RIB'),
+    miniStat(`${fmtInt(onNewest)} / ${fmtInt(days.length)}`, newestDay ? `on ${dateOnly(newestDay)}` : 'on the newest day'),
     miniStat(publishAgeMin === null ? '—' : `${fmtDuration(publishAgeMin * 60)} ago`, 'last RIB update'),
+    miniStat(`${fmtInt(withState.length)} / ${fmtInt(rows.length)}`, 'have a published RIB'),
   ]);
 
   const nodes = [stats];
   if (behind.length) {
     const shown = behind.slice(0, 6);
     nodes.push(el('p', { class: 'rib-behind' }, [
-      el('span', { text: `${fmtInt(behind.length)} of ${fmtInt(days.length)} collectors have no ${dateOnly(newestDay)} RIB yet: ` }),
+      el('span', { text: `the other ${fmtInt(behind.length)} still show ${dateOnly(behind[0].day)} or older: ` }),
       el('span', { class: 'rib-names', text: shown.map((entry) => `${entry.name} ${dayLabel(entry.day)}`).join(', ') }),
       behind.length > shown.length
         ? el('span', { class: 'rib-more', text: ` +${fmtInt(behind.length - shown.length)} more` })
@@ -1443,13 +1448,13 @@ function renderRibCoverage() {
     ]));
     nodes.push(el('p', { class: 'rib-note', text: 'a day\'s RIBs are published through the day, so most collectors show the previous day until their first dump of the new one arrives' }));
   } else if (newestDay) {
-    nodes.push(el('p', { class: 'rib-behind', text: `every collector has a ${dateOnly(newestDay)} RIB` }));
+    nodes.push(el('p', { class: 'rib-behind', text: `every collector has published a ${dateOnly(newestDay)} RIB` }));
   } else {
     nodes.push(el('p', { class: 'rib-behind', text: 'no RIB has been published yet' }));
   }
 
   const gaps = [];
-  if (hot < rows.length) gaps.push(`${fmtInt(rows.length - hot)} without a current RIB`);
+  if (hot < rows.length) gaps.push(`${fmtInt(rows.length - hot)} without any RIB`);
   if (withState.length < rows.length) gaps.push(`${fmtInt(rows.length - withState.length)} without published RIB history`);
   if (gaps.length) {
     nodes.push(el('p', { class: 'rib-note', text: `${gaps.join(' · ')} · counted, listed anyway` }));
