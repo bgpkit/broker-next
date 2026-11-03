@@ -300,6 +300,11 @@ function bucketStamp(value) {
 
 async function api(path, params = {}) {
   const url = new URL(path, API);
+  // Cloudflare rewrites a cached API response's Cache-Control to a four-hour browser TTL, which
+  // outlives the five-minute progress samples: a reload inside that window re-renders the previous
+  // finish estimate. Rotate the key on the sample cadence so a stale browser copy is never reused,
+  // while the edge still answers every request inside the same five minutes.
+  url.searchParams.set('t', String(Math.floor(Date.now() / 300000)));
   for (const [key, value] of Object.entries(params)) {
     if (value === undefined || value === null || value === '') continue;
     url.searchParams.set(key, String(value));
