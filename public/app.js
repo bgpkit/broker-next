@@ -1926,6 +1926,9 @@ const RECENT_ROWS = 20;
 /// every row is one archive file with its window, its parse cost and where it can be opened.
 function renderRecentFiles(target, data, name) {
   const rows = Array.isArray(data && data.data) ? data.data : [];
+  // Above a million matching files the API answers a sampled total; mark it so the caption does
+  // not present an estimate as a count.
+  const estimated = Boolean(data && data.meta && data.meta.total_is_estimate);
   const total = Number.isFinite(Number(data && data.total)) ? Number(data.total) : rows.length;
   target.src.textContent = `recent files · newest ${fmtInt(RECENT_ROWS)} · ${fmtInt(rows.length)} rows`;
 
@@ -1960,7 +1963,7 @@ function renderRecentFiles(target, data, name) {
 
   target.body.replaceChildren(el('div', { class: 'recent-wrap' }, table), el('p', {
     class: 'tbl-note',
-    text: `newest first · ${fmtInt(total)} files in the broker index for this collector · size is the archive size recorded by the index`,
+    text: `newest first · ${estimated ? '≈' : ''}${fmtInt(total)} files in the broker index for this collector · size is the archive size recorded by the index`,
   }));
 }
 
