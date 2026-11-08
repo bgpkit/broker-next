@@ -10,7 +10,7 @@
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="icon" type="image/png" sizes="192x192" href="/favicon.png">
   <link rel="apple-touch-icon" href="/favicon.png">
-  <link rel="stylesheet" href="style.css?v=202611030240">
+  <link rel="stylesheet" href="style.css?v=202611082140">
 </head>
 <body>
   <a class="skip-link" href="#grid">Skip to collectors</a>
@@ -198,6 +198,21 @@
     <p class="drawer-foot">links open the upstream archive, not this site</p>
   </aside>
 
-  <script type="module" src="app.js?v=202611031650"></script>
+  <aside class="drawer issue" id="issue" data-open="false" role="dialog" aria-modal="true" aria-labelledby="issue-title" aria-hidden="true">
+    <div class="drawer-head">
+      <div class="drawer-id">
+        <h2 id="issue-title">—</h2>
+        <p class="drawer-sub" id="issue-sub"></p>
+      </div>
+      <button class="close" id="issue-close" type="button" aria-label="Close issue details">×</button>
+    </div>
+    <div class="drawer-body" id="issue-body"></div>
+    <div class="issue-foot">
+      <p class="issue-note" id="issue-note"></p>
+      <button class="issue-filter" id="issue-filter" type="button">show in the grid</button>
+    </div>
+  </aside>
+
+  <script type="module" src="app.js?v=202611082140"></script>
 </body>
 </html>

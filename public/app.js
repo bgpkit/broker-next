@@ -80,6 +80,7 @@ const state = {
   window: '24h',
   fetchedAt: null,
   lastFocus: null,
+  issueFocus: null,
   detailSeq: 0,
 };
 
@@ -510,6 +511,7 @@ function buildModel() {
         files24: null,
         failed24: null,
         expected24: null,
+        missing24: null,
         // Selected-window values: everything the page prints.
         filesWin: null,
         elementsWin: 0,
@@ -569,6 +571,7 @@ function buildModel() {
       tile.files24 = agg.files;
       tile.failed24 = agg.failed;
       tile.expected24 = agg.expected;
+      tile.missing24 = agg.missing;
     }
 
     const win = windowBy.get(tile.name);
@@ -718,8 +721,19 @@ function renderStrip() {
 }
 
 /// States worth interrupting for. Alias and deactivated are annotations, not faults, so they stay
-/// in the legend; an ok fleet renders nothing here at all.
-const ATTENTION = ['nofiles', 'late', 'partial', 'degraded', 'pending'];
+/// in the legend; an ok fleet renders nothing here at all. Clicking a state opens the dialog that
+/// names the collectors and what the file feed shows for each, because a count alone cannot say
+/// whether a gap is an upstream stop, a failed parse or a collector that never started.
+const ATTENTION = ['nofiles', 'late', 'partial', 'pending'];
+
+/// One plain sentence per attention state, printed in the issue dialog's footer. The rules
+/// themselves live in healthOf(); this text is what a reader needs to interpret them.
+const STATE_NOTE = {
+  nofiles: 'no file in the last 24 hours, or at least a tenth of the expected files missing or unparsed',
+  late: 'the newest file is past twice the publishing cadence, plus the usual publication lag',
+  partial: 'a file from the last 24 hours is listed but did not parse',
+  pending: 'the catalog lists the collector before the archive carries its first file',
+};
 
 function renderAttention(counts) {
   const host = $('#attention');
@@ -739,22 +753,16 @@ function renderAttention(counts) {
         class: 'attention-item',
         type: 'button',
         'data-health': health,
-        'aria-pressed': state.filters.health === health ? 'true' : 'false',
-        title: 'filter the grid to these collectors',
-        onclick: () => {
-          const next = state.filters.health === health ? '' : health;
-          state.filters.health = next;
-          const select = $('#f-health');
-          if (select) select.value = next;
-          renderStrip();
-          renderGrid();
-        },
+        title: 'which collectors, and what the file feed shows for each',
+        onclick: () => openIssue(health),
       }, [
         dotEl(health),
         el('span', { text: `${HEALTH[health].label} ${fmtInt(counts[health])}` }),
       ]),
     ])
   );
+  // The dialog describes the model, so a window switch or a reload has to redraw it in place.
+  if (issue.health && $('#issue').dataset.open === 'true') renderIssue();
 }
 
 /* ---------- grid ---------- */
@@ -2106,16 +2114,188 @@ function closeDetail(silent = false) {
   }
 }
 
+/* ---------- issue details ---------- */
+
+/// The attention line says a state and a count; a reader cannot tell from that whether a collector
+/// stopped publishing, failed to parse, or was never crawled. This dialog answers it from the three
+/// responses the page already holds (catalog, file feed, 24h file index), so opening it costs no
+/// request and cannot disagree with the tiles.
+const issue = { health: null };
+
+/// The feed carries the last file that ever arrived for a collector, however old, which is what
+/// dates a stop. The cadence is printed beside it because 40 hours late means different things at
+/// 15 minutes and at 8 hours.
+function issueFeedLine(row, ageMin, cadenceMin) {
+  if (!row) return 'nothing in the file feed';
+  const end = dayStamp(row.ts_end || row.ts_start);
+  const age = Number.isFinite(Number(ageMin)) ? ` · ${fmtAge(ageMin)} old` : '';
+  const cadence = cadenceMin ? ` · published every ${fmtCadence(cadenceMin)}` : '';
+  return `${end}${age}${cadence}`;
+}
+
+function issueDelivery(tile) {
+  if (tile.files24 === null) return 'no file parsed in the last 24h';
+  const parts = [`${fmtInt(tile.files24)} parsed`];
+  if (num(tile.expected24) > 0) parts.push(`of ${fmtInt(tile.expected24)} expected`);
+  if (num(tile.missing24) > 0) parts.push(`${fmtInt(tile.missing24)} missing`);
+  if (num(tile.failed24) > 0) parts.push(`${fmtInt(tile.failed24)} failed`);
+  return parts.join(' · ');
+}
+
+/// Why the state fired, in the order healthOf() tests for it. Every sentence is derived from a
+/// field this page can show, never from a guess about the upstream site.
+function issueWhy(tile) {
+  if (tile.health === 'pending') {
+    const since = tile.activated ? ` since ${dateOnly(tile.activated)}` : '';
+    return `The catalog has listed this collector${since}, and no file from it has arrived yet. It is not being crawled until the archive carries one.`;
+  }
+  if (tile.health === 'late') {
+    return `The newest file is older than twice this collector's publishing cadence plus the usual publication lag.`;
+  }
+  if (tile.health === 'partial') {
+    return `${fmtInt(tile.failed24)} file${num(tile.failed24) === 1 ? '' : 's'} from the last 24 hours did not parse; the rest arrived.`;
+  }
+  if (tile.health === 'nofiles') {
+    const newest = tile.newestUpdate || tile.newestRib;
+    if (!newest) return 'No file from this collector appears in the file feed at all.';
+    const ended = dayStamp(newest.ts_end || newest.ts_start);
+    const lead = `Nothing from this collector was parsed in the last 24 hours. The newest file in the feed ended ${ended}.`;
+    if (num(tile.failed24) > 0) {
+      return `${lead} ${fmtInt(tile.failed24)} file${num(tile.failed24) === 1 ? '' : 's'} are listed in the last 24 hours and failed to parse.`;
+    }
+    return lead;
+  }
+  return '';
+}
+
+function issueBlock(tile) {
+  const cadence = cadenceOf(tile.project);
+  const rows = [
+    kvRow('newest updates', issueFeedLine(tile.newestUpdate, tile.updateAgeMin, cadence && cadence.updates)),
+    kvRow('newest rib', issueFeedLine(tile.newestRib, tile.ribAgeMin, cadence && cadence.rib)),
+    kvRow('last 24h', issueDelivery(tile)),
+    kvRow(
+      'catalog',
+      tile.deactivated
+        ? `deactivated ${dateOnly(tile.deactivated)}`
+        : tile.inCatalog
+          ? `listed since ${tile.activated ? dateOnly(tile.activated) : 'an unknown date'}`
+          : 'not listed in the catalog'
+    ),
+  ];
+  const children = [
+    el('div', { class: 'issue-head' }, [
+      el('button', {
+        class: 'issue-name',
+        type: 'button',
+        text: tile.name,
+        title: 'open collector details',
+        onclick: () => {
+          closeIssue(true);
+          openDetail(tile.name, null);
+        },
+      }),
+      el('span', {
+        class: 'issue-meta',
+        text: `${projectLabel(tile.project)} · ${tile.country ? countryLabel(tile.country) : 'no country'} · ${HEALTH[tile.health].label}`,
+      }),
+    ]),
+    el('dl', { class: 'kv' }, rows),
+    el('p', { class: 'issue-why', text: issueWhy(tile) }),
+  ];
+  if (tile.dataUrl) {
+    children.push(el('p', { class: 'issue-link' }, ['archive root · ', safeLink(tile.dataUrl, 'open') ]));
+  }
+  return el('div', { class: 'issue-row' }, children);
+}
+
+function renderIssue() {
+  const dialog = $('#issue');
+  const health = issue.health;
+  if (!health || !dialog || dialog.dataset.open !== 'true') return;
+  const tiles = state.tiles
+    .filter((tile) => tile.health === health)
+    .sort((a, b) => (num(b.updateAgeMin) || 0) - (num(a.updateAgeMin) || 0) || a.name.localeCompare(b.name));
+  const feed = state.sources.latest;
+  const feedAt = feed && !feed.error && feed.data && feed.data.meta ? feed.data.meta.generated_at : null;
+
+  $('#issue-title').textContent = `${HEALTH[health].label} · ${fmtInt(tiles.length)} collector${tiles.length === 1 ? '' : 's'}`;
+  $('#issue-sub').textContent = `last 24h${feedAt ? ` · file feed as of ${stamp(feedAt)}` : ''}`;
+  $('#issue-body').replaceChildren(...tiles.map(issueBlock));
+  $('#issue-filter').textContent = `show these in the grid`;
+  $('#issue-note').textContent = STATE_NOTE[health] || '';
+}
+
+function openIssue(health) {
+  const tiles = state.tiles.filter((tile) => tile.health === health);
+  if (!tiles.length) return;
+  issue.health = health;
+  state.issueFocus = document.activeElement;
+  closeDetail(true);
+  const dialog = $('#issue');
+  const scrim = $('#scrim');
+  document.body.classList.add('drawer-open');
+  scrim.hidden = false;
+  scrim.dataset.open = 'true';
+  dialog.dataset.open = 'true';
+  dialog.setAttribute('aria-hidden', 'false');
+  renderIssue();
+  $('#issue-close').focus();
+}
+
+/// Closing leaves the scrim alone while the collector dialog is open over it: the two share one
+/// backdrop, and only the last one out hides it.
+function closeIssue(silent = false) {
+  const dialog = $('#issue');
+  if (!dialog || dialog.dataset.open !== 'true') return;
+  dialog.dataset.open = 'false';
+  dialog.setAttribute('aria-hidden', 'true');
+  issue.health = null;
+  if ($('#detail').dataset.open !== 'true') {
+    const scrim = $('#scrim');
+    scrim.dataset.open = 'false';
+    window.setTimeout(() => {
+      if (dialog.dataset.open !== 'true' && $('#detail').dataset.open !== 'true') scrim.hidden = true;
+    }, 200);
+    document.body.classList.remove('drawer-open');
+  }
+  if (!silent) {
+    const target = state.issueFocus;
+    if (target && document.contains(target) && typeof target.focus === 'function') target.focus();
+  }
+}
+
+/// The dialog is a reading surface; the grid filter stays one click away rather than being the
+/// click itself, so opening it never rearranges the page under the reader.
+function applyIssueFilter() {
+  const health = issue.health;
+  if (!health) return;
+  state.filters.health = health;
+  const select = $('#f-health');
+  if (select) select.value = health;
+  closeIssue(true);
+  renderStrip();
+  renderGrid();
+}
+
+function closeOpenDialog() {
+  if ($('#issue').dataset.open === 'true') closeIssue();
+  else closeDetail();
+}
+
 function onKeydown(event) {
-  const drawer = $('#detail');
-  if (drawer.dataset.open !== 'true') return;
+  const issueEl = $('#issue');
+  const detailEl = $('#detail');
+  const dialog = issueEl.dataset.open === 'true' ? issueEl : detailEl;
+  if (dialog.dataset.open !== 'true') return;
   if (event.key === 'Escape') {
     event.preventDefault();
-    closeDetail();
+    if (dialog === issueEl) closeIssue();
+    else closeDetail();
     return;
   }
   if (event.key !== 'Tab') return;
-  const focusables = [...drawer.querySelectorAll('a[href], button:not([disabled]), input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+  const focusables = [...dialog.querySelectorAll('a[href], button:not([disabled]), input, select, textarea, [tabindex]:not([tabindex="-1"])')]
     .filter((node) => node.getClientRects().length > 0);
   if (!focusables.length) return;
   const first = focusables[0];
@@ -2243,9 +2423,16 @@ function archiveWeeks(data) {
     bucket.last = date;
     bucket.expected += expected;
     bucket.done += done;
+    // The collector pair comes from one day, not from two maxima: pairing one day's count with
+    // another day's completions can print "57/57 complete" on a week that is 43% parsed. The day
+    // with the most collectors in the week is the one the tooltip names.
     if (data.collectors_expected && data.collectors_done) {
-      bucket.collectorsExpected = Math.max(bucket.collectorsExpected, data.collectors_expected[index] || 0);
-      bucket.collectorsDone = Math.max(bucket.collectorsDone, data.collectors_done[index] || 0);
+      const dayCollectors = data.collectors_expected[index] || 0;
+      if (dayCollectors > bucket.collectorsExpected) {
+        bucket.collectorsExpected = dayCollectors;
+        bucket.collectorsDone = data.collectors_done[index] || 0;
+        bucket.collectorsOn = date;
+      }
     }
   }
   return [...byYear.keys()].sort((a, b) => a - b).map((year) => {
@@ -2271,8 +2458,12 @@ function archiveTooltip(week) {
   const span = `${dateOnly(week.first)}${week.last.getTime() === week.first.getTime() ? '' : ` – ${dateOnly(week.last)}`}`;
   if (week.expected === 0) return `${span} · no files in the archive`;
   const percent = ((week.done / week.expected) * 100).toFixed(1);
+  // The ratio is parsed files over the files this project's archive holds that day, summed over
+  // the collectors that had files. A collector installed later contributes nothing to an earlier
+  // day, so 2003 is not measured against today's 57 collectors: on 2003-01-01 the denominator is
+  // that day's 96 files from the single collector the archive carried.
   const collectors = week.collectorsExpected
-    ? ` · ${week.collectorsDone}/${week.collectorsExpected} collectors complete`
+    ? ` · ${week.collectorsDone}/${week.collectorsExpected} collectors complete on ${dateOnly(week.collectorsOn)}`
     : '';
   return `${span} · ${percent}% parsed (${fmtInt(week.done)} / ${fmtInt(week.expected)} files)${collectors}`;
 }
@@ -2541,7 +2732,9 @@ function wireEvents() {
 
   $('#f-reset').addEventListener('click', resetFilters);
   $('#detail-close').addEventListener('click', () => closeDetail());
-  $('#scrim').addEventListener('click', () => closeDetail());
+  $('#issue-close').addEventListener('click', () => closeIssue());
+  $('#issue-filter').addEventListener('click', applyIssueFilter);
+  $('#scrim').addEventListener('click', closeOpenDialog);
   document.addEventListener('keydown', onKeydown);
 }
 

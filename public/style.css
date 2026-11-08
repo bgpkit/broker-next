@@ -1126,10 +1126,78 @@ col.rf-open { width: 10%; }
 .attention-item:hover { text-decoration: underline; text-underline-offset: 2px; }
 .attention-item[data-health="nofiles"] { color: var(--fail); }
 .attention-item[data-health="late"],
-.attention-item[data-health="partial"],
-.attention-item[data-health="degraded"] { color: var(--stale); }
+.attention-item[data-health="partial"] { color: var(--stale); }
 .attention-item[data-health="pending"] { color: var(--muted); }
-.attention-item[aria-pressed="true"] { background: var(--ink); color: var(--paper); text-decoration: none; }
+
+/* ---------- issue dialog ---------- */
+
+/* The attention state, opened: which collectors and what the file feed shows for each. Same frame
+   as the collector dialog, narrower, because this one lists collectors instead of describing one.
+   It centres itself rather than inheriting .drawer's inset:0/margin:auto: with an auto height and
+   all four insets pinned the box stretches to the viewport, so a short list floats above a dead
+   band and the footer sits far below the content. */
+.drawer.issue {
+  width: min(720px, 94vw);
+  max-height: 82vh;
+  inset: auto;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) scale(0.985);
+}
+.drawer.issue[data-open="true"] { transform: translate(-50%, -50%); }
+.issue-row { padding: 13px 0 14px; border-top: 1px solid var(--rule); }
+.issue-row:first-child { border-top: 0; padding-top: 6px; }
+.issue-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.issue-name {
+  font: 600 13px/1.2 var(--mono);
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--rule-2);
+  text-underline-offset: 3px;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+.issue-name:hover { text-decoration-color: var(--muted); }
+.issue-meta {
+  font: 9px var(--mono);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.issue-row .kv { margin-top: 9px; }
+.issue-why { font-size: 11px; line-height: 1.45; color: var(--ink-2); margin-top: 9px; }
+.issue-link { font: 9px var(--mono); color: var(--faint); margin-top: 7px; overflow-wrap: anywhere; }
+.issue-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 9px 18px;
+  border-top: 1px solid var(--rule);
+  background: var(--panel-sunk);
+}
+.issue-note { font: 8.5px/1.4 var(--mono); color: var(--muted); letter-spacing: 0.02em; }
+.issue-filter {
+  flex: 0 0 auto;
+  font: 9px var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  background: var(--panel);
+  border: 1px solid var(--rule-2);
+  border-radius: 2px;
+  padding: 5px 9px;
+  cursor: pointer;
+}
+.issue-filter:hover { border-color: var(--muted); color: var(--ink); }
+@media (max-width: 560px) {
+  .issue-foot { flex-direction: column; align-items: flex-start; }
+}
 
 /* ---------- tile noise ---------- */
 
