@@ -790,6 +790,45 @@ function renderAttention(counts) {
   if (issue.health && $('#issue').dataset.open === 'true') renderIssue();
 }
 
+/// The incident ledger, in its own words. This is the only element on the page that quotes an
+/// external verdict, so it says nothing the ledger does not: collector, condition, and state. A
+/// missing or failed response hides the block instead of guessing.
+function renderIncidents() {
+  const host = $('#incidents');
+  if (!host) return;
+  const source = state.sources.incidents;
+  const rows = source && !source.error && source.data && Array.isArray(source.data.data) ? source.data.data : [];
+  if (!rows.length) {
+    host.hidden = true;
+    host.replaceChildren();
+    return;
+  }
+  const feedLink = el('a', {
+    href: 'https://api.bgpkit.com/feeds/broker/all.atom',
+    target: '_blank',
+    rel: 'noopener noreferrer',
+    text: 'atom',
+  });
+  const detail = el('a', {
+    href: 'https://api.bgpkit.com/v4/meta/incidents',
+    target: '_blank',
+    rel: 'noopener noreferrer',
+    text: 'json',
+  });
+  const STATE_WORD = { firing: 'firing', recovering: 'recovering', pending: 'pending', held: 'held' };
+  host.replaceChildren(
+    el('p', { class: 'inc-head', text: `open incidents · ${fmtInt(rows.length)}` }),
+    ...rows.map((row) =>
+      el('div', { class: 'inc-row' }, [
+        el('span', { class: 'inc-name', text: row.collector }),
+        el('span', { class: 'inc-state', text: `${row.condition === 'rib_stopped' ? 'RIB dumps' : 'updates'} ${STATE_WORD[row.state] || row.state} since ${row.onset}` }),
+      ]),
+    ),
+    el('span', { class: 'inc-feed' }, ['subscribe · ', feedLink, ' · ', detail]),
+  );
+  host.hidden = false;
+}
+
 /* ---------- grid ---------- */
 
 /// Two-letter units only: at tile size "28m / 2h" is read at a glance, "upd 28m rib 1h 58m" is not.
@@ -3085,6 +3124,9 @@ async function boot() {
     healthSpec(),
     ...windowSpecs(state.window),
     { key: 'latest', path: '/v4/mrt/collectors/latest', params: {} },
+    // The incident ledger is point-in-time, like the file feed, and optional: without it the page
+    // renders exactly as before.
+    { key: 'incidents', path: '/v4/meta/incidents', params: {} },
   ];
 
   const results = await Promise.all(specs.map(loadSource));
@@ -3096,6 +3138,7 @@ async function boot() {
   buildModel();
   renderHeader();
   renderStrip();
+  renderIncidents();
   renderFleetChart();
   renderRibChart();
   renderProjects();
