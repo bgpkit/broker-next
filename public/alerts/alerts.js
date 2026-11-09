@@ -6,12 +6,7 @@
 
 const API = 'https://api.bgpkit.com';
 
-const STATE_WORD = {
-  firing: 'stopped',
-  recovering: 'resumed',
-  pending: 'pending',
-  held: 'held',
-};
+
 
 /// The same two shapes as the status page: how long ago, and the exact instant in UTC.
 function ageWords(minutes) {
@@ -52,17 +47,33 @@ function el(tag, attrs = {}, children = []) {
   return node;
 }
 
+function severity(alert) {
+  if (alert.severity === 'warning' || alert.severity === 'critical') return alert.severity;
+  return String(alert.condition || '').endsWith('_late') ? 'warning' : 'critical';
+}
+
+/// The state machine says `firing`; what that means depends on the tier: a firing critical alert is
+/// a stopped archive, a firing warning is a collector running behind.
 function what(alert) {
   const stream = alert.data_type === 'rib' ? 'RIB dumps' : 'updates';
-  return `${stream} ${STATE_WORD[alert.state] || alert.state}`;
+  const level = severity(alert);
+  let word;
+  if (alert.state === 'resolved') word = 'resolved';
+  else if (alert.state === 'recovering') word = level === 'warning' ? 'back on schedule' : 'resumed';
+  else if (level === 'warning') word = 'late';
+  else word = alert.state === 'firing' ? 'stopped' : alert.state;
+  return `${stream} ${word}`;
 }
 
 function alertItem(alert) {
   const sinceMs = Date.parse(alert.onset);
   const age = Number.isFinite(sinceMs) ? (Date.now() - sinceMs) / 60000 : null;
   const resolved = alert.state === 'resolved';
+  const level = severity(alert);
   return el('article', { class: 'alert-item' }, [
     el('p', { class: 'line' }, [
+      el('span', { class: `sev is-${level}`, text: level }),
+      document.createTextNode(' '),
       el('a', { href: `/#${encodeURIComponent(alert.collector)}`, text: alert.collector }),
       document.createTextNode(' '),
       el('span', { class: resolved ? 'state is-resolved' : 'state', text: what(alert) }),
@@ -120,8 +131,12 @@ async function load() {
     fill('resolved', [], '');
     return;
   }
-  const open = alerts.filter((alert) => alert.state !== 'resolved');
-  const resolved = alerts.filter((alert) => alert.state === 'resolved');
+  // Critical first, then the warnings: a reader scanning the page should meet the stopped
+  // collectors before the merely late ones. Within a tier the API already returns newest first.
+  const rank = { critical: 0, warning: 1 };
+  const bySeverity = (a, b) => (rank[severity(a)] ?? 9) - (rank[severity(b)] ?? 9);
+  const open = alerts.filter((alert) => alert.state !== 'resolved').sort(bySeverity);
+  const resolved = alerts.filter((alert) => alert.state === 'resolved').sort(bySeverity);
   fill('open', open, 'Nothing is open. Every collector the broker watches published its newest file inside the threshold.');
   fill('resolved', resolved, 'No alert resolved in the last 30 days.');
   fillCollectorCard(open);

@@ -20,7 +20,7 @@
     <header class="masthead">
       <p class="eyebrow">BGPKIT broker</p>
       <h1>Upstream alerts</h1>
-      <p class="lede">A collector appears here when the archive it publishes to stops listing its update files or RIB dumps. The evidence is the archive's own directory listing, not our parsing: an alert says the source went quiet, never that we fell behind.</p>
+      <p class="lede">A collector appears here when the archive it publishes to stops listing its update files or RIB dumps (critical), or when it falls behind its own publishing cadence while still publishing (warning). The evidence is the archive's own directory listing, not our parsing: an alert says the source went quiet, never that we fell behind.</p>
       <p class="back"><a href="/">← collector status</a></p>
     </header>
 
@@ -42,6 +42,7 @@
       <section class="subscribe" aria-labelledby="subscribe-title">
         <h2 id="subscribe-title">Subscribe</h2>
         <p>One entry per alert, updated in place when its state changes, kept for 30 days after it resolves. Nothing is pushed: a reader polls the feed, and an entry never repeats under a new id.</p>
+        <p class="note">The feeds carry critical alerts only, meaning a collector whose archive stopped. Warnings are shown on this page and served by the API at <code style="display:inline;padding:0">/v4/meta/alerts?severity=warning</code>, because a collector that is merely behind is not worth waking a subscriber for.</p>
 
         <div class="feed-cards">
           <article class="feed-card">

@@ -817,52 +817,59 @@ function stampWords(value) {
   return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}Z`;
 }
 
-const ALERT_STATE_WORD = { firing: 'stopped', recovering: 'resumed', pending: 'pending', held: 'held', late: 'late' };
-const ALERT_STATE_RANK = { stopped: 0, late: 1, pending: 2, resumed: 3 };
+const ALERT_RANK = { critical: 0, warning: 1 };
 
-/// Two sources, one list. The ledger says what crossed the gap threshold; the page itself can see a
-/// collector one or two slots behind, which is late rather than stopped and never reaches the
-/// ledger. Both answer the same question, so they share the strip and the same click target.
+/// The phrase a row carries. The state machine says `firing`; what that means depends on the tier:
+/// a firing critical alert is a stopped archive, a firing warning is a collector running behind.
+function alertWords(alert) {
+  const stream = alert.data_type === 'rib' ? 'RIB dumps' : 'updates';
+  const level = alertSeverity(alert);
+  let word;
+  if (alert.state === 'resolved') word = 'resolved';
+  else if (alert.state === 'recovering') word = level === 'warning' ? 'back on schedule' : 'resumed';
+  else if (level === 'warning') word = 'late';
+  else word = alert.state === 'firing' ? 'stopped' : alert.state;
+  return `${stream} ${word}`;
+}
+
+/// Severity is the ledger's own field; the fallback only covers a response rendered before the
+/// column existed.
+function alertSeverity(row) {
+  if (row.severity === 'warning' || row.severity === 'critical') return row.severity;
+  return String(row.condition || '').endsWith('_late') ? 'warning' : 'critical';
+}
+
+/// One list, two tiers. Critical is the archive having stopped; warning is the same collector
+/// behind schedule. Both come from the ledger, so the page has no threshold of its own to disagree
+/// with it. Ranked by severity, then by how long the silence has lasted.
 function upstreamAlertRows() {
   const source = state.sources.upstreamAlerts;
   const ledger = source && !source.error && source.data && Array.isArray(source.data.data) ? source.data.data : [];
-  const rows = ledger.map((row) => {
-    const sinceMs = Date.parse(row.onset);
-    return {
-      name: row.collector,
-      stream: row.data_type === 'rib' ? 'RIB dumps' : 'updates',
-      state: ALERT_STATE_WORD[row.state] || row.state,
-      since: row.onset,
-      ageMin: Number.isFinite(sinceMs) ? (Date.now() - sinceMs) / 60000 : null,
-    };
-  });
-  const covered = new Set(ledger.map((row) => row.collector));
-  for (const tile of state.tiles) {
-    if (tile.health !== 'late' || covered.has(tile.name)) continue;
-    rows.push({
-      name: tile.name,
-      stream: 'updates',
-      state: 'late',
-      since: (tile.newestUpdate && tile.newestUpdate.ts_start) || null,
-      // Recomputed from the timestamp rather than read from the tile's stored age, so the strip can
-      // be redrawn on a timer without refetching anything.
-      ageMin: tile.newestUpdate ? (Date.now() - asUtc(tile.newestUpdate.ts_start).getTime()) / 60000 : tile.updateAgeMin,
-    });
-  }
-  return rows.sort(
-    (a, b) =>
-      (ALERT_STATE_RANK[a.state] ?? 9) - (ALERT_STATE_RANK[b.state] ?? 9) ||
-      (b.ageMin ?? 0) - (a.ageMin ?? 0) ||
-      a.name.localeCompare(b.name)
-  );
+  return ledger
+    .map((row) => {
+      const sinceMs = Date.parse(row.onset);
+      return {
+        name: row.collector,
+        severity: alertSeverity(row),
+        words: alertWords(row),
+        since: row.onset,
+        ageMin: Number.isFinite(sinceMs) ? (Date.now() - sinceMs) / 60000 : null,
+      };
+    })
+    .sort(
+      (a, b) =>
+        (ALERT_RANK[a.severity] ?? 9) - (ALERT_RANK[b.severity] ?? 9) ||
+        (b.ageMin ?? 0) - (a.ageMin ?? 0) ||
+        a.name.localeCompare(b.name)
+    );
 }
 
-/// The count is split by what the words mean: a stopped collector is a published alert, a late one
-/// is a collector the page can see is behind but the ledger has not called yet.
-function summary(rows) {
-  const stopped = rows.filter((row) => row.state !== 'late').length;
-  const late = rows.length - stopped;
-  return [stopped ? `${fmtInt(stopped)} stopped` : null, late ? `${fmtInt(late)} late` : null].filter(Boolean).join(' · ');
+function alertSummary(rows) {
+  const critical = rows.filter((row) => row.severity === 'critical').length;
+  const warning = rows.length - critical;
+  return [critical ? `${fmtInt(critical)} critical` : null, warning ? `${fmtInt(warning)} warning` : null]
+    .filter(Boolean)
+    .join(' · ');
 }
 
 function renderUpstreamAlerts() {
@@ -876,25 +883,25 @@ function renderUpstreamAlerts() {
   }
   host.replaceChildren(
     el('p', { class: 'alert-head' }, [
-      el('span', { text: `upstream alerts · ${summary(rows)}` }),
+      el('span', { text: `upstream alerts · ${alertSummary(rows)}` }),
       el('a', { class: 'alert-more', href: '/alerts/', text: 'all alerts →' }),
     ]),
     ...rows.map((row) => {
       const body = [
         el('span', { class: 'alert-name', text: row.name }),
-        el('span', { class: 'alert-what', text: `${row.stream} ${row.state}` }),
+        el('span', { class: 'alert-what', text: row.words }),
         el('span', { class: 'alert-age', text: ageWords(row.ageMin) }),
         el('span', { class: 'alert-stamp', text: stampWords(row.since) }),
       ];
       // Only a collector the page knows how to describe opens into the drawer; a name from the
       // ledger that the catalog no longer lists stays a plain row instead of a dead button.
-      if (!state.byName.has(row.name)) return el('div', { class: 'alert-row is-flat' }, body);
+      if (!state.byName.has(row.name)) return el('div', { class: `alert-row is-flat is-${row.severity}` }, body);
       return el(
         'button',
         {
-          class: 'alert-row',
+          class: `alert-row is-${row.severity}`,
           type: 'button',
-          title: `${row.name}: last file ${stampWords(row.since) || 'unknown'}, open the collector`,
+          title: `${row.name}: ${row.severity}, last file ${stampWords(row.since) || 'unknown'}`,
           onclick: (event) => openDetail(row.name, event.currentTarget),
         },
         body
