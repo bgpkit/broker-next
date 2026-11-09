@@ -121,28 +121,53 @@ function fillCollectorCard(alerts) {
   if (note) note.textContent = 'The collectors alerting right now; any name from the status page works.';
 }
 
-async function load() {
-  let alerts = [];
-  try {
-    const response = await fetch(`${API}/v4/meta/alerts`, { headers: { accept: 'application/json' } });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const body = await response.json();
-    alerts = Array.isArray(body.data) ? body.data : [];
-  } catch (error) {
-    fill('open', [], `the alert ledger did not answer (${error.message})`);
-    fill('resolved', [], '');
-    return;
-  }
+/// The last response, kept so the ages can be redrawn without asking the API again. Every age on
+/// this page is "how long ago", and a number computed once at load is wrong a minute later.
+let alerts = [];
+let loadedAt = null;
+
+function render() {
   // Critical first, then the warnings: a reader scanning the page should meet the stopped
   // collectors before the merely late ones. Within a tier the API already returns newest first.
   const rank = { critical: 0, warning: 1 };
   const bySeverity = (a, b) => (rank[severity(a)] ?? 9) - (rank[severity(b)] ?? 9);
   const isClosed = (alert) => alert.state === 'resolved' || alert.state === 'superseded';
   const open = alerts.filter((alert) => !isClosed(alert)).sort(bySeverity);
-  const resolved = alerts.filter(isClosed).sort(bySeverity);
+  const closed = alerts.filter(isClosed).sort(bySeverity);
+
   fill('open', open, 'Nothing is open. Every collector the broker watches published its newest file inside the threshold.');
-  fill('resolved', resolved, 'Nothing closed in the last 30 days.');
+  fill('resolved', closed, 'Nothing closed in the last 30 days.');
   fillCollectorCard(open);
+
+  const stamp = document.getElementById('as-of');
+  if (stamp) {
+    stamp.textContent = loadedAt
+      ? `read at ${stampWords(loadedAt.toISOString())}, refreshed every minute`
+      : '';
+  }
+}
+
+async function load() {
+  try {
+    const response = await fetch(`${API}/v4/meta/alerts`, { headers: { accept: 'application/json' } });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const body = await response.json();
+    alerts = Array.isArray(body.data) ? body.data : [];
+    loadedAt = new Date();
+  } catch (error) {
+    fill('open', [], `the alert ledger did not answer (${error.message})`);
+    fill('resolved', [], '');
+    return;
+  }
+  render();
 }
 
 load();
+// Two clocks, because they answer different questions: the ages need redrawing every half minute,
+// and the ledger itself only changes when the evaluator runs, every five.
+setInterval(() => {
+  if (!document.hidden) render();
+}, 30000);
+setInterval(() => {
+  if (!document.hidden) load();
+}, 60000);
