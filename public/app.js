@@ -1409,7 +1409,7 @@ function renderRibChart() {
   const padB = 24;
   const plotW = W - padL - padR;
   const plotH = H - padT - padB;
-  const peak = Math.max(1, ...buckets.map((bucket) => Math.max(bucket.ris, bucket.rv)));
+  const peak = Math.max(1, ...buckets.map((bucket) => Math.max(bucket.risExpected, bucket.rvExpected)));
   const ceiling = niceCeil(peak);
   const yOf = (value) => padT + plotH - (value / ceiling) * plotH;
   const step = plotW / buckets.length;
@@ -1426,7 +1426,9 @@ function renderRibChart() {
   buckets.forEach((bucket, index) => {
     const x = padL + index * step;
     [['ris', projectColor('riperis')], ['rv', projectColor('routeviews')]].forEach(([side, color], position) => {
-      const value = bucket[side];
+      // The bar is what the archive lists, not what we parsed: this panel answers "did the source
+      // publish", and our backlog must not look like upstream silence.
+      const value = bucket[`${side}Expected`];
       if (!value) return;
       const height = Math.max(1.5, (value / ceiling) * plotH);
       const bx = x + step / 2 - barW - 1 + position * (barW + 2);
@@ -1439,7 +1441,7 @@ function renderRibChart() {
         class: 'bar',
       });
       bar.append(svgEl('title', {
-        text: `${stamp(bucket.t)} · ${side === 'ris' ? 'RIPE RIS' : 'RouteViews'} ${fmtInt(value)} of ${fmtInt(bucket[`${side}Expected`])} RIB files`,
+        text: `${stamp(bucket.t)} · ${side === 'ris' ? 'RIPE RIS' : 'RouteViews'} ${fmtInt(value)} RIB dumps listed by the archive · ${fmtInt(bucket[side])} parsed`,
       }));
       nodes.push(bar);
     });
@@ -1464,6 +1466,8 @@ function renderRibChart() {
     }),
     { ris: 0, rv: 0, risExpected: 0, rvExpected: 0 }
   );
+  const listedTotal = totals.risExpected + totals.rvExpected;
+  const parsedTotal = totals.ris + totals.rv;
   if (legend) {
     const keyNode = (color, text) => {
       const node = el('span', { class: 'key' });
@@ -1471,14 +1475,14 @@ function renderRibChart() {
       return node;
     };
     legend.replaceChildren(
-      keyNode(projectColor('riperis'), `RIPE RIS ${fmtInt(totals.ris)} of ${fmtInt(totals.risExpected)} rib files`),
-      keyNode(projectColor('routeviews'), `RouteViews ${fmtInt(totals.rv)} of ${fmtInt(totals.rvExpected)} rib files`)
+      keyNode(projectColor('riperis'), `RIPE RIS ${fmtInt(totals.risExpected)} listed · ${fmtInt(totals.ris)} parsed`),
+      keyNode(projectColor('routeviews'), `RouteViews ${fmtInt(totals.rvExpected)} listed · ${fmtInt(totals.rv)} parsed`)
     );
   }
   if (src) {
     src.textContent =
-      `parsed files · RIS publishes a dump every 8h, RouteViews every 2h · ` +
-      `${buckets.length} ${spec.bucketNoun} buckets · as of ${stamp(source.at)}`;
+      `archive index · RIS publishes a dump every 8h, RouteViews every 2h · ${buckets.length} ${spec.bucketNoun} buckets · ` +
+      `${fmtInt(listedTotal)} listed, ${fmtInt(parsedTotal)} parsed · as of ${stamp(source.at)}`;
   }
 }
 
@@ -2620,42 +2624,48 @@ function cardSvg(tile, updatesData, ribsData) {
   // and the track is the archive's own expectation, so an empty track means nothing was published.
   const barW = 40;
   const gap = 8;
-  const strip = (caption, days, topY) => {
+  // Both strips answer one question: is the source still publishing? The bar is the files the archive
+  // lists against what the collector's own cadence implies for that day, so a full bar means the
+  // source delivered and an empty one means it did not. Our parse progress is a separate number
+  // underneath, because a parse backlog must never read as an upstream outage.
+  const strip = (caption, days, perDay, topY) => {
     text(64, topY, caption, mono(11, CARD_COLOR.muted, 'letter-spacing="2"'));
     const barTop = topY + 14;
     const barBase = topY + 84;
     days.forEach((day, index) => {
       const x = 64 + index * (barW + gap);
-      // Four states, not three: "the archive published nothing that day" and "the archive published
-      // files and we parsed none of them" are different findings, and drawing both as an empty bar
-      // let a backlog read like an upstream outage.
-      const published = day.expected > 0;
-      const ratio = published ? Math.min(1, day.files / day.expected) : 0;
-      const height = day.files > 0 ? Math.max(4, Math.round(ratio * (barBase - barTop))) : 4;
-      const fill = day.files > 0 ? (ratio >= 0.999 ? CARD_COLOR.accent : CARD_COLOR.stale) : CARD_COLOR.fail;
-      const track = !published ? CARD_COLOR.track : day.files > 0 ? CARD_COLOR.track : CARD_COLOR.empty;
+      const ratio = perDay > 0 ? Math.min(1, day.expected / perDay) : 0;
+      const height = ratio > 0 ? Math.max(4, Math.round(ratio * (barBase - barTop))) : 0;
+      const fill = ratio >= 0.999 ? CARD_COLOR.accent : ratio > 0 ? CARD_COLOR.stale : null;
+      const track = ratio > 0 ? CARD_COLOR.track : CARD_COLOR.empty;
       parts.push(`<rect x="${x}" y="${barTop}" width="${barW}" height="${barBase - barTop}" fill="${track}"/>`);
-      if (published) parts.push(`<rect x="${x}" y="${barBase - height}" width="${barW}" height="${height}" fill="${fill}"/>`);
+      if (fill) parts.push(`<rect x="${x}" y="${barBase - height}" width="${barW}" height="${height}" fill="${fill}"/>`);
       text(x + barW / 2, barBase + 17, String(new Date(day.ms).getUTCDate()), mono(10, CARD_COLOR.faint, 'text-anchor="middle"'));
     });
+    const listed = days.reduce((sum, day) => sum + day.expected, 0);
+    const wanted = perDay * days.length;
     const parsed = days.reduce((sum, day) => sum + day.files, 0);
-    const expected = days.reduce((sum, day) => sum + day.expected, 0);
-    text(64, topY + 118, `${fmtInt(parsed)} parsed · ${fmtInt(expected)} published by the archive`, mono(11, CARD_COLOR.muted));
-    return { parsed, expected };
+    text(64, topY + 118, `${fmtInt(listed)} of ${fmtInt(wanted)} listed by the archive · ${fmtInt(parsed)} of those parsed`, mono(11, CARD_COLOR.muted));
+    return { parsed, listed, wanted };
   };
 
   const range = `${dayLabel(updateDays[0].ms)} to ${dayLabel(updateDays[updateDays.length - 1].ms)}`;
-  const updatesTotals = strip(`UPDATE FILES PER DAY · ${range}`, updateDays, 336);
-  strip(`RIB FILES PER DAY · ${range}`, ribDays, 496);
+  const cadence = cadenceOf(tile.project);
+  const updatesPerDay = cadence ? Math.round(1440 / cadence.updates) : 0;
+  const ribsPerDay = cadence ? Math.round(1440 / cadence.rib) : 0;
+  const ribTotals = { listed: 0, wanted: 0 };
+  const updatesTotals = strip(`UPDATE FILES PER DAY · ${range} · ${fmtInt(updatesPerDay)}/day expected`, updateDays, updatesPerDay, 336);
+  const ribResult = strip(`RIB FILES PER DAY · ${range} · ${fmtInt(ribsPerDay)}/day expected`, ribDays, ribsPerDay, 496);
+  ribTotals.listed = ribResult.listed;
+  ribTotals.wanted = ribResult.wanted;
 
   // The legend sits on the first strip's caption line and covers both strips: same three states.
   // Each swatch is drawn the way the day is drawn: same track, same bar height. A solid red block
   // next to a pale day with a red baseline reads as two different states.
   [
-    ['complete', CARD_COLOR.accent, CARD_COLOR.track, 9, 520],
-    ['partial', CARD_COLOR.stale, CARD_COLOR.track, 6, 610],
-    ['none parsed', CARD_COLOR.fail, CARD_COLOR.empty, 4, 692],
-    ['nothing published', null, CARD_COLOR.track, 0, 792],
+    ['all listed', CARD_COLOR.accent, CARD_COLOR.track, 9, 560],
+    ['some missing', CARD_COLOR.stale, CARD_COLOR.track, 6, 656],
+    ['none listed', null, CARD_COLOR.empty, 0, 772],
   ].forEach(([label, fill, track, barHeight, x]) => {
     parts.push(`<rect x="${x}" y="327" width="9" height="9" fill="${track}"/>`);
     if (fill && barHeight) {
@@ -2668,8 +2678,8 @@ function cardSvg(tile, updatesData, ribsData) {
   const stats = [
     ['LAST UPDATES FILE', tile.newestUpdate ? dayStamp(tile.newestUpdate.ts_end || tile.newestUpdate.ts_start) : 'none in the feed', tile.updateAgeMin !== null ? `${fmtAge(tile.updateAgeMin)} ago` : ''],
     ['LAST RIB FILE', tile.newestRib ? dayStamp(tile.newestRib.ts_end || tile.newestRib.ts_start) : 'none in the feed', tile.ribAgeMin !== null ? `${fmtAge(tile.ribAgeMin)} ago` : ''],
-    ['UPDATES · 14 DAYS', `${fmtInt(updatesTotals.parsed)} / ${fmtInt(updatesTotals.expected)}`, 'parsed / published'],
-    ['RIB DUMPS · 14 DAYS', `${fmtInt(totals.ribs.parsed)} / ${fmtInt(totals.ribs.expected)}`, 'parsed / published'],
+    ['UPDATES · 14 DAYS', `${fmtInt(updatesTotals.listed)} / ${fmtInt(updatesTotals.wanted)}`, 'in the archive / expected'],
+    ['RIB DUMPS · 14 DAYS', `${fmtInt(ribTotals.listed)} / ${fmtInt(ribTotals.wanted)}`, 'in the archive / expected'],
   ];
   stats.forEach(([label, value, note], index) => {
     const y = 360 + index * 70;
