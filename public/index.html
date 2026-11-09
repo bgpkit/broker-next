@@ -10,7 +10,7 @@
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="icon" type="image/png" sizes="192x192" href="/favicon.png">
   <link rel="apple-touch-icon" href="/favicon.png">
-  <link rel="stylesheet" href="style.css?v=202611090256">
+  <link rel="stylesheet" href="style.css?v=202611090330">
 </head>
 <body>
   <a class="skip-link" href="#grid">Skip to collectors</a>
@@ -100,6 +100,15 @@
             <svg class="fleet-chart" id="fleet-chart" viewBox="0 0 720 200" role="img"
                  aria-label="Messages per hour across the fleet, split by project"></svg>
             <div class="chart-legend" id="fleet-legend"></div>
+          </div>
+          <div class="panel chart-panel rib-panel">
+            <div class="panel-head">
+              <h2 id="rib-title">RIB deliveries · last 24h</h2>
+              <p class="src" id="rib-src">parsed files · waiting</p>
+            </div>
+            <svg class="fleet-chart" id="rib-chart" viewBox="0 0 720 150" role="img"
+                 aria-label="RIB files delivered per bucket, split by project"></svg>
+            <div class="chart-legend" id="rib-legend"></div>
           </div>
         </div>
         <div class="panel projects-panel">
@@ -216,6 +225,6 @@
     </div>
   </aside>
 
-  <script type="module" src="app.js?v=202611090256"></script>
+  <script type="module" src="app.js?v=202611090330"></script>
 </body>
 </html>

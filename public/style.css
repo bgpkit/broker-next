@@ -977,6 +977,9 @@ col.rf-open { width: 10%; }
 /* ---------- chart hover readout, peer table extras ---------- */
 
 .chart-wrap, .chart-panel { position: relative; }
+/* The RIB panel is its own chart, one card below the updates one, because a collector can stop
+   publishing dumps while its updates keep flowing. */
+.rib-panel { margin-top: 14px; }
 .chart-tip {
   position: absolute;
   z-index: 5;

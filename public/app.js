@@ -1367,6 +1367,121 @@ function renderFleetChart() {
   }
 }
 
+function renderRibChart() {
+  const svg = $('#rib-chart');
+  if (!svg) return;
+  const src = $('#rib-src');
+  const legend = $('#rib-legend');
+  const source = state.sources.ribSeries;
+  const spec = windowSpec();
+  const title = $('#rib-title');
+  if (title) title.textContent = `RIB deliveries · last ${spec.label}`;
+
+  const empty = (message) => {
+    svg.replaceChildren();
+    if (src) src.textContent = message;
+    if (legend) legend.replaceChildren();
+  };
+  if (!source || source.error) return empty('parsed files · unavailable');
+
+  const rows = Array.isArray(source.data && source.data.data) ? source.data.data : [];
+  const byBucket = new Map();
+  for (const row of rows) {
+    const t = String(row.bucket_start || '');
+    if (!t) continue;
+    let bucket = byBucket.get(t);
+    if (!bucket) {
+      bucket = { t, ris: 0, rv: 0, risExpected: 0, rvExpected: 0 };
+      byBucket.set(t, bucket);
+    }
+    const side = String(row.id || '') === 'ripe-ris' ? 'ris' : 'rv';
+    bucket[side] += num(row.files);
+    bucket[`${side}Expected`] += num(row.expected_files);
+  }
+  const buckets = [...byBucket.values()].sort((a, b) => a.t.localeCompare(b.t));
+  if (!buckets.length) return empty(`parsed files · no RIB files in the last ${spec.label}`);
+
+  const W = 720;
+  const H = 150;
+  const padL = 58;
+  const padR = 12;
+  const padT = 10;
+  const padB = 24;
+  const plotW = W - padL - padR;
+  const plotH = H - padT - padB;
+  const peak = Math.max(1, ...buckets.map((bucket) => Math.max(bucket.ris, bucket.rv)));
+  const ceiling = niceCeil(peak);
+  const yOf = (value) => padT + plotH - (value / ceiling) * plotH;
+  const step = plotW / buckets.length;
+  const barW = Math.max(2, Math.min(14, step * 0.36));
+  const labelEvery = Math.max(1, Math.ceil(buckets.length / 6));
+
+  const nodes = [];
+  for (let i = 0; i <= 4; i += 1) {
+    const value = (ceiling / 4) * i;
+    const y = yOf(value);
+    nodes.push(svgEl('line', { x1: padL, x2: W - padR, y1: y, y2: y, class: 'grid-line' }));
+    nodes.push(svgEl('text', { x: padL - 6, y: y + 3, class: 'axis', 'text-anchor': 'end', text: fmtCompact(value) }));
+  }
+  buckets.forEach((bucket, index) => {
+    const x = padL + index * step;
+    [['ris', projectColor('riperis')], ['rv', projectColor('routeviews')]].forEach(([side, color], position) => {
+      const value = bucket[side];
+      if (!value) return;
+      const height = Math.max(1.5, (value / ceiling) * plotH);
+      const bx = x + step / 2 - barW - 1 + position * (barW + 2);
+      const bar = svgEl('rect', {
+        x: bx.toFixed(2),
+        y: (padT + plotH - height).toFixed(2),
+        width: barW.toFixed(2),
+        height: height.toFixed(2),
+        fill: color,
+        class: 'bar',
+      });
+      bar.append(svgEl('title', {
+        text: `${stamp(bucket.t)} · ${side === 'ris' ? 'RIPE RIS' : 'RouteViews'} ${fmtInt(value)} of ${fmtInt(bucket[`${side}Expected`])} RIB files`,
+      }));
+      nodes.push(bar);
+    });
+    if (index % labelEvery === 0) {
+      nodes.push(svgEl('text', {
+        x: (x + step / 2).toFixed(2),
+        y: H - 8,
+        class: 'axis',
+        'text-anchor': 'middle',
+        text: spec.bucket === 'day' ? dayLabel(bucket.t) : stamp(bucket.t).slice(0, 5),
+      }));
+    }
+  });
+  svg.replaceChildren(...nodes);
+
+  const totals = buckets.reduce(
+    (acc, bucket) => ({
+      ris: acc.ris + bucket.ris,
+      rv: acc.rv + bucket.rv,
+      risExpected: acc.risExpected + bucket.risExpected,
+      rvExpected: acc.rvExpected + bucket.rvExpected,
+    }),
+    { ris: 0, rv: 0, risExpected: 0, rvExpected: 0 }
+  );
+  if (legend) {
+    const keyNode = (color, text) => {
+      const node = el('span', { class: 'key' });
+      node.append(el('i', { style: `background:${color}` }), document.createTextNode(text));
+      return node;
+    };
+    legend.replaceChildren(
+      keyNode(projectColor('riperis'), `RIPE RIS ${fmtInt(totals.ris)} of ${fmtInt(totals.risExpected)} rib files`),
+      keyNode(projectColor('routeviews'), `RouteViews ${fmtInt(totals.rv)} of ${fmtInt(totals.rvExpected)} rib files`)
+    );
+  }
+  if (src) {
+    src.textContent =
+      `parsed files · RIS publishes a dump every 8h, RouteViews every 2h · ` +
+      `${buckets.length} ${spec.bucketNoun} buckets · as of ${stamp(source.at)}`;
+  }
+}
+
 function renderProjects() {
   const host = $('#project-cards');
   if (!host) return;
@@ -2686,6 +2801,14 @@ function windowSpecs(key) {
       path: '/v4/mrt/counts',
       params: { since: win.since, until: win.until, bucket: spec.bucket, dimension: 'project' },
     },
+    // RIBs are their own series: one dump carries hundreds of millions of elements, and a collector
+    // that stops publishing dumps is a different fault from one that stops publishing updates. Same
+    // endpoint, different data_type, so the two never share a bucket.
+    {
+      key: 'ribSeries',
+      path: '/v4/mrt/counts',
+      params: { since: win.since, until: win.until, bucket: spec.bucket, dimension: 'project', data_type: 'ribs' },
+    },
     // Parse-time percentiles are their own product: the counts answer carries every counter but no
     // distribution, so the chart's fourth reading costs one more request per window.
     {
@@ -2949,6 +3072,7 @@ async function boot() {
   renderHeader();
   renderStrip();
   renderFleetChart();
+  renderRibChart();
   renderProjects();
   renderControls();
   renderAlerts();
@@ -2991,23 +3115,20 @@ async function applyWindow(key) {
 
   // Every window-scoped source is reloaded, not just aggregates and series: the reset
   // annotations ride on the same window and would otherwise stay stuck on the previous one.
+  // Loaded by key rather than by position, so adding a source cannot silently leave it on the
+  // previous window.
   const specs = windowSpecs(key);
-  const [aggregates, series, distributions, resets] = await Promise.all([
-    key === '24h' ? Promise.resolve(state.sources.health) : loadSource(specs[0]),
-    loadSource(specs[1]),
-    loadSource(specs[2]),
-    loadSource(specs[3]),
-  ]);
-  state.sources.aggregates = aggregates;
-  state.sources.series = series;
-  state.sources.distributions = distributions;
-  state.sources.resets = resets;
+  const results = await Promise.all(specs.map((entry) => (entry.key === 'aggregates' && key === '24h'
+    ? Promise.resolve(state.sources.health)
+    : loadSource(entry))));
+  for (const result of results) state.sources[result.key] = result;
   state.fetchedAt = new Date();
 
   buildModel();
   renderHeader();
   renderStrip();
   renderFleetChart();
+  renderRibChart();
   renderProjects();
   renderControls();
   renderAlerts();
