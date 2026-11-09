@@ -53,12 +53,14 @@ function severity(alert) {
 }
 
 /// The state machine says `firing`; what that means depends on the tier: a firing critical alert is
-/// a stopped archive, a firing warning is a collector running behind.
+/// a stopped archive, a firing warning is a collector running behind. A closed row says how it
+/// closed, because a warning that escalated did not recover.
 function what(alert) {
   const stream = alert.data_type === 'rib' ? 'RIB dumps' : 'updates';
   const level = severity(alert);
   let word;
-  if (alert.state === 'resolved') word = 'resolved';
+  if (alert.state === 'resolved') word = 'resumed';
+  else if (alert.state === 'superseded') word = 'escalated to stopped';
   else if (alert.state === 'recovering') word = level === 'warning' ? 'back on schedule' : 'resumed';
   else if (level === 'warning') word = 'late';
   else word = alert.state === 'firing' ? 'stopped' : alert.state;
@@ -68,7 +70,7 @@ function what(alert) {
 function alertItem(alert) {
   const sinceMs = Date.parse(alert.onset);
   const age = Number.isFinite(sinceMs) ? (Date.now() - sinceMs) / 60000 : null;
-  const resolved = alert.state === 'resolved';
+  const closed = alert.state === 'resolved' || alert.state === 'superseded';
   const level = severity(alert);
   return el('article', { class: 'alert-item' }, [
     el('p', { class: 'line' }, [
@@ -76,7 +78,7 @@ function alertItem(alert) {
       document.createTextNode(' '),
       el('a', { href: `/#${encodeURIComponent(alert.collector)}`, text: alert.collector }),
       document.createTextNode(' '),
-      el('span', { class: resolved ? 'state is-resolved' : 'state', text: what(alert) }),
+      el('span', { class: closed ? (alert.state === 'resolved' ? 'state is-resolved' : 'state is-superseded') : 'state', text: what(alert) }),
     ]),
     el('p', { class: 'meta' }, [
       document.createTextNode('last file '),
@@ -135,10 +137,11 @@ async function load() {
   // collectors before the merely late ones. Within a tier the API already returns newest first.
   const rank = { critical: 0, warning: 1 };
   const bySeverity = (a, b) => (rank[severity(a)] ?? 9) - (rank[severity(b)] ?? 9);
-  const open = alerts.filter((alert) => alert.state !== 'resolved').sort(bySeverity);
-  const resolved = alerts.filter((alert) => alert.state === 'resolved').sort(bySeverity);
+  const isClosed = (alert) => alert.state === 'resolved' || alert.state === 'superseded';
+  const open = alerts.filter((alert) => !isClosed(alert)).sort(bySeverity);
+  const resolved = alerts.filter(isClosed).sort(bySeverity);
   fill('open', open, 'Nothing is open. Every collector the broker watches published its newest file inside the threshold.');
-  fill('resolved', resolved, 'No alert resolved in the last 30 days.');
+  fill('resolved', resolved, 'Nothing closed in the last 30 days.');
   fillCollectorCard(open);
 }
 
