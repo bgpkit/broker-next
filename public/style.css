@@ -1393,13 +1393,15 @@ col.rf-open { width: 10%; }
 .alerts-page .back a { color: var(--accent); }
 .alerts-page .back .as-of { margin-left: 10px; color: var(--faint); }
 
-.alert-list {
+/* Only the history scrolls. What is open now is the page's point and is read in full; the closed
+   list is an archive and would otherwise push the subscriptions off the screen. */
+#resolved {
   max-height: 46vh;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
 }
-.alert-list[data-count="0"] { max-height: none; overflow: visible; }
+#resolved[data-count="0"] { max-height: none; overflow: visible; }
 
 .alert-item {
   padding: 8px 0;

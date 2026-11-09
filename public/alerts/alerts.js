@@ -135,13 +135,13 @@ let loadedAt = null;
 /// Hours from `count` back to the current one, in the format the series endpoint uses. The API only
 /// returns hours that had something open; the axis needs every hour, because a quiet hour is a fact
 /// and should be drawn as an empty slot rather than collapsed away.
-function bucketAxis(hours, stepMinutes) {
+/// Buckets between the first and last snapshot the server actually returned. Ending the axis at the
+/// browser's clock instead would draw one bucket the response predates, and that empty bar reads as
+/// "everything recovered" when it only means "the edge cache answered from a minute ago".
+function bucketAxis(firstMs, lastMs, stepMinutes) {
     const step = stepMinutes * 60000;
-    const end = new Date();
-    end.setUTCMilliseconds(0);
-    end.setUTCSeconds(0);
-    end.setUTCMinutes(end.getUTCMinutes() - (end.getUTCMinutes() % stepMinutes));
-    const start = new Date(end.getTime() - (hours * 3600000) + step);
+    const end = new Date(lastMs);
+    const start = new Date(firstMs);
     const pad = (value) => String(value).padStart(2, '0');
     const stamp = (at) =>
         `${at.getUTCFullYear()}-${pad(at.getUTCMonth() + 1)}-${pad(at.getUTCDate())}T${pad(at.getUTCHours())}:${pad(at.getUTCMinutes())}:00Z`;
@@ -167,8 +167,10 @@ function renderChart() {
     }
     // Start where the data starts. The ledger only has a few hours of history so far, and drawing
     // sixty empty hours beside four full ones hides the shape this chart exists to show.
-    const earliest = Math.min(...series.map((row) => Date.parse(row.hour)).filter(Number.isFinite));
-    const axis = bucketAxis(hours, stepMinutes).filter((point) => point.at.getTime() >= earliest);
+    const stamps = series.map((row) => Date.parse(row.hour)).filter(Number.isFinite);
+    const earliest = Math.min(...stamps);
+    const latest = Math.max(...stamps);
+    const axis = bucketAxis(earliest, latest, stepMinutes);
     const order = ['route-views', 'ripe-ris'];
     projects.sort((a, b) => (order.indexOf(a) + 1 || 9) - (order.indexOf(b) + 1 || 9) || a.localeCompare(b));
 
@@ -180,7 +182,7 @@ function renderChart() {
     const rows = projects.map((project) => {
         const bars = axis.map(({ key, at }) => {
             const hit = lookup.get(`${project}|${key}`) || { critical: 0, warning: 0 };
-            const label = `${stampWords(key)} · ${project} · ${hit.critical} stopped, ${hit.warning} late`;
+            const label = `${stampWords(key)} · ${project} · ${hit.critical} critical, ${hit.warning} warning`;
             return el('div', { class: 'chart-bar', title: label }, [
                 hit.critical ? el('span', { class: 'crit', style: `height:${(hit.critical / top) * 100}%` }) : null,
                 hit.warning ? el('span', { class: 'warn', style: `height:${(hit.warning / top) * 100}%` }) : null,
@@ -191,7 +193,7 @@ function renderChart() {
         // speck; the number at the end of the row is the current hour, so the reader gets both.
         const lastKey = axis[axis.length - 1].key;
         const last = lookup.get(`${project}|${lastKey}`) || { critical: 0, warning: 0 };
-        const current = last.critical ? `${last.critical} stopped` : last.warning ? `${last.warning} late` : 'clear';
+        const current = last.critical ? `${last.critical} critical` : last.warning ? `${last.warning} warning` : 'clear';
         return el('div', { class: 'chart-row' }, [
             el('span', { class: 'chart-name', text: name }),
             el('div', { class: 'chart-bars' }, bars),
@@ -227,7 +229,7 @@ function render() {
   const open = alerts.filter((alert) => !isClosed(alert)).sort(bySeverity);
   const closed = alerts.filter(isClosed).sort(bySeverity);
 
-  fill('open', open, 'Nothing is open. Every collector the broker watches published its newest file inside the threshold.');
+  fill('open', open, 'No collector is behind its threshold.');
   fill('resolved', closed, 'Nothing closed in the last 30 days.');
   const openTitle = document.getElementById('open-title');
   const closedTitle = document.getElementById('resolved-title');
