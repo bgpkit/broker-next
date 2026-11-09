@@ -1393,6 +1393,14 @@ col.rf-open { width: 10%; }
 .alerts-page .back a { color: var(--accent); }
 .alerts-page .back .as-of { margin-left: 10px; color: var(--faint); }
 
+.alert-list {
+  max-height: 46vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.alert-list[data-count="0"] { max-height: none; overflow: visible; }
+
 .alert-item {
   padding: 8px 0;
   border-top: 1px solid var(--rule);

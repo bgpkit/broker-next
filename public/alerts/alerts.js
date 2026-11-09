@@ -97,9 +97,13 @@ function fill(hostId, alerts, emptyText) {
   host.replaceChildren();
   if (!alerts.length) {
     host.append(el('p', { class: 'alert-empty', text: emptyText }));
+    host.dataset.count = '0';
     return;
   }
   for (const alert of alerts) host.append(alertItem(alert));
+  // The list scrolls once it outgrows the viewport rather than pushing everything below it off the
+  // page; a heading counter tells the reader that there is more behind the scrollbar.
+  host.dataset.count = String(alerts.length);
 }
 
 /// The per-collector card names the collectors that are alerting right now, so the example link is
@@ -225,6 +229,10 @@ function render() {
 
   fill('open', open, 'Nothing is open. Every collector the broker watches published its newest file inside the threshold.');
   fill('resolved', closed, 'Nothing closed in the last 30 days.');
+  const openTitle = document.getElementById('open-title');
+  const closedTitle = document.getElementById('resolved-title');
+  if (openTitle) openTitle.textContent = open.length ? `Open now · ${open.length}` : 'Open now';
+  if (closedTitle) closedTitle.textContent = closed.length ? `Closed in the last 30 days · ${closed.length}` : 'Closed in the last 30 days';
   fillCollectorCard(open);
   renderChart();
 
