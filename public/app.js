@@ -845,7 +845,12 @@ function alertSeverity(row) {
 function upstreamAlertRows() {
   const source = state.sources.upstreamAlerts;
   const ledger = source && !source.error && source.data && Array.isArray(source.data.data) ? source.data.data : [];
+  // The ledger answers with everything it closed in the last thirty days as well, because the
+  // alerts page and the drawer need that history. The strip is what is open right now: a collector
+  // that recovered is not an alert any more, and putting it here would make the page disagree with
+  // the tile beside it.
   return ledger
+    .filter((row) => row.state !== 'resolved' && row.state !== 'superseded')
     .map((row) => {
       const sinceMs = Date.parse(row.onset);
       return {
