@@ -2452,7 +2452,7 @@ function closeOpenDialog() {
 /// responses the page already holds, so the picture cannot claim more than the page does: no server
 /// renderer, no dependency, one 1200x640 canvas drawn from an SVG string.
 const CARD_W = 1200;
-const CARD_H = 1060;
+const CARD_H = 1100;
 const CARD_COLOR = {
   paper: '#f7f5ee',
   ink: '#171610',
@@ -2560,6 +2560,14 @@ function cardStatement(tile, totals) {
   return '';
 }
 
+/// Timestamps on a card that travels use RFC 3339: "07 Nov 01:00Z" needs the reader to know the
+/// date convention, while 2026-11-07T01:00:00Z is the same everywhere and sorts as text.
+function rfc3339(value) {
+  const date = asUtc(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toISOString().slice(0, 19) + 'Z';
+}
+
 /// A card is read out of context, so its headers and footers carry the year: "09 Nov" alone is
 /// ambiguous on a screenshot that outlives the month.
 function cardStamp(value) {
@@ -2595,9 +2603,10 @@ function cardSvg(tile, updatesData, ribsData) {
 
   parts.push(`<circle cx="86" cy="276" r="11" fill="${accent}"/>`);
   text(114, 292, CARD_STATE[tile.health] || tile.health, serif(54, CARD_COLOR.ink));
-  const lastUpdates = tile.newestUpdate ? dayStamp(tile.newestUpdate.ts_end || tile.newestUpdate.ts_start) : 'none';
-  const lastRib = tile.newestRib ? dayStamp(tile.newestRib.ts_end || tile.newestRib.ts_start) : 'none';
-  text(72, 356, `last file ${lastUpdates} · last RIB ${lastRib}`, mono(32, CARD_COLOR.ink2));
+  const lastUpdates = tile.newestUpdate ? rfc3339(tile.newestUpdate.ts_end || tile.newestUpdate.ts_start) : 'none';
+  const lastRib = tile.newestRib ? rfc3339(tile.newestRib.ts_end || tile.newestRib.ts_start) : 'none';
+  text(72, 352, `last update file  ${lastUpdates}`, mono(28, CARD_COLOR.ink2));
+  text(72, 392, `last RIB dump     ${lastRib}`, mono(28, CARD_COLOR.ink2));
 
   const cadence = cadenceOf(tile.project);
   const perDay = (minutes) => (cadence && minutes ? Math.round(1440 / minutes) : 0);
@@ -2620,10 +2629,10 @@ function cardSvg(tile, updatesData, ribsData) {
     const wanted = expectedPerDay * days.length;
     text(72, barBase + 82, `${fmtInt(listed)} of ${fmtInt(wanted)} listed`, mono(34, CARD_COLOR.ink2));
   };
-  strip(`UPDATE FILES · ${fmtInt(perDay(cadence && cadence.updates))} A DAY`, updateDays, perDay(cadence && cadence.updates), 450);
-  strip(`RIB DUMPS · ${fmtInt(perDay(cadence && cadence.rib))} A DAY`, ribDays, perDay(cadence && cadence.rib), 745);
+  strip(`UPDATE FILES · ${fmtInt(perDay(cadence && cadence.updates))} A DAY`, updateDays, perDay(cadence && cadence.updates), 480);
+  strip(`RIB DUMPS · ${fmtInt(perDay(cadence && cadence.rib))} A DAY`, ribDays, perDay(cadence && cadence.rib), 780);
 
-  text(72, CARD_H - 30, `broker.bgpkit.com · ${cardStamp(newestFeedStamp(tile))}`, mono(26, CARD_COLOR.faint));
+  text(72, CARD_H - 30, `broker.bgpkit.com · ${rfc3339(newestFeedStamp(tile))}`, mono(26, CARD_COLOR.faint));
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${CARD_W}" height="${CARD_H}" viewBox="0 0 ${CARD_W} ${CARD_H}">${parts.join('')}</svg>`;
 }
