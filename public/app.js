@@ -44,13 +44,15 @@ const SOURCE_LABEL = {
 };
 
 const HEALTH = {
-  pending: { label: 'not fetched', rank: 8 },
-  nofiles: { label: 'no files', rank: 0 },
-  partial: { label: 'partial', rank: 1 },
-  late: { label: 'late', rank: 2 },
+  stopped: { label: 'stopped', rank: 0 },
+  failing: { label: 'parse failures', rank: 0.5 },
+  nofiles: { label: 'no files', rank: 1 },
+  partial: { label: 'partial', rank: 2 },
+  late: { label: 'late', rank: 3 },
   legacy: { label: 'old name', rank: 4 },
   alias: { label: 'duplicate', rank: 7.5 },
   ok: { label: 'ok', rank: 7 },
+  pending: { label: 'not fetched', rank: 8 },
   retired: { label: 'deactivated', rank: 9 },
 };
 
@@ -81,6 +83,7 @@ const state = {
   fetchedAt: null,
   lastFocus: null,
   issueFocus: null,
+  detailName: null,
   detailSeq: 0,
 };
 
@@ -231,7 +234,11 @@ function fmtAge(minutes) {
   const total = Math.ceil(parsed);
   if (total < 60) return `${total}m`;
   if (total < 60 * 48) return `${Math.floor(total / 60)}h ${String(total % 60).padStart(2, '0')}m`;
-  return `${Math.ceil(parsed / 1440)}d`;
+  // Days carry their hours: a stop 50 hours old is "2d 2h", not "3d", and the tile's short label
+  // rounds to the same 2d so the two never disagree on one screen.
+  const days = Math.floor(total / 1440);
+  const hours = Math.round((total % 1440) / 60);
+  return hours ? `${days}d ${hours}h` : `${days}d`;
 }
 
 /// Cadences and thresholds read better without a seconds field: 5m, 8h, 16h 15m.
@@ -342,8 +349,11 @@ async function loadSource(spec) {
 // name that only exists in the processed-file index is usually a collector renamed in the catalog.
 //   retired   catalog entry with deactivated_on (old RRCs, closed RouteViews collectors)
 //   legacy    processed files under a name the current catalog does not list (renamed collectors)
-//   nofiles   no file in the window, or >=10% (min 3) of the expected files missing
-//   partial   a small number of files missing from the window
+//   stopped   the feed has files for it, but none arrived in the last 24h: it published and then
+//             went quiet, which is what a collector outage looks like from here
+//   failing   files arrived and roughly a tenth or more did not parse
+//   nofiles   in the catalog past the grace window with no file in the feed, ever
+//   partial   a small number of files failed to parse or are missing from the window
 //   late      newest updates or newest RIB is past 2x its own cadence plus a small allowance
 function staleByCadence(tile) {
   const cadence = cadenceOf(tile.project);
@@ -369,15 +379,28 @@ function healthOf(tile) {
   if (tile.deactivated) return 'retired';
   if (!tile.inCatalog) return tile.alias ? 'alias' : 'legacy';
   const ageDays = Number.isFinite(tile.activatedMs) ? (Date.now() - tile.activatedMs) / 86400000 : null;
-  if (!tile.everSeen && ageDays !== null && ageDays <= PENDING_DAYS) return 'pending';
-  if (tile.files24 === null) return 'nofiles';
+  // "No files" is a statement about the whole life of the collector, so it needs the feed to hold
+  // no file at all. A collector that published for years and then went quiet is stopped, and the
+  // age of its newest file is the fact that matters; calling that "no files" reads as if the
+  // archive had never carried it.
+  const everHadFile = Boolean(tile.newestUpdate || tile.newestRib) || Boolean(tile.inProcessed);
+  if (!everHadFile) {
+    return !tile.everSeen && ageDays !== null && ageDays <= PENDING_DAYS ? 'pending' : 'nofiles';
+  }
   const expected = Math.max(tile.expected24 || 0, (tile.files24 || 0) + (tile.failed24 || 0));
   const failed = tile.failed24 || 0;
-  if (!tile.inProcessed || tile.files24 === 0) return 'nofiles';
-  if (failed >= Math.max(3, Math.ceil(expected * 0.1))) return 'nofiles';
+  if (failed >= Math.max(3, Math.ceil(expected * 0.1))) return 'failing';
   if (failed > 0) return 'partial';
+  if (tile.files24 === null || tile.files24 === 0) return 'stopped';
   if (staleByCadence(tile)) return 'late';
   return 'ok';
+}
+
+/// A state word plus the one number that explains it where that number exists. "stopped 2d" says
+/// both what happened and how long ago, which a bare "stopped" leaves the reader to look up.
+function stateLabel(tile) {
+  if (tile.health === 'stopped' && tile.updateAgeMin !== null) return `stopped ${shortAge(tile.updateAgeMin)}`;
+  return HEALTH[tile.health].label;
 }
 
 function tileOrder(a, b) {
@@ -724,12 +747,14 @@ function renderStrip() {
 /// in the legend; an ok fleet renders nothing here at all. Clicking a state opens the dialog that
 /// names the collectors and what the file feed shows for each, because a count alone cannot say
 /// whether a gap is an upstream stop, a failed parse or a collector that never started.
-const ATTENTION = ['nofiles', 'late', 'partial', 'pending'];
+const ATTENTION = ['stopped', 'failing', 'nofiles', 'late', 'partial', 'pending'];
 
 /// One plain sentence per attention state, printed in the issue dialog's footer. The rules
 /// themselves live in healthOf(); this text is what a reader needs to interpret them.
 const STATE_NOTE = {
-  nofiles: 'no file in the last 24 hours, or at least a tenth of the expected files missing or unparsed',
+  stopped: 'files arrived in the past, but none in the last 24 hours; the newest file in the feed dates the stop',
+  failing: 'at least a tenth of the files in the last 24 hours arrived and did not parse',
+  nofiles: 'listed in the catalog, with no file in the feed since it appeared',
   late: 'the newest file is past twice the publishing cadence, plus the usual publication lag',
   partial: 'a file from the last 24 hours is listed but did not parse',
   pending: 'the catalog lists the collector before the archive carries its first file',
@@ -838,7 +863,7 @@ function tileEl(tile) {
   const children = [
     el('span', { class: 'tile-state' }, [
       dotEl(tile.health),
-      el('span', { class: 'tile-state-text', text: tile.health === 'ok' ? '' : HEALTH[tile.health].label }),
+      el('span', { class: 'tile-state-text', text: tile.health === 'ok' ? '' : stateLabel(tile) }),
     ]),
     el('span', { class: 'tile-name', text: tile.name }),
     el('span', {
@@ -1531,19 +1556,23 @@ function kvRow(label, value) {
 }
 
 function statusNode(tile) {
+  const newest = tile.newestUpdate || tile.newestRib;
+  const ended = newest ? dayStamp(newest.ts_end || newest.ts_start) : null;
   const notes = {
     ok: `${fmtInt(tile.files24)} files in the last 24h`,
-    partial: 'some files are missing from the last 24h',
+    partial: 'a file from the last 24h did not parse',
     late: staleReason(tile),
     pending: `in the catalog since ${tile.activated ? dateOnly(tile.activated) : 'recently'}, no archive file yet`,
-    nofiles: tile.inCatalog ? 'in the catalog, but no file in the last 24h' : 'no file in the last 24h',
+    stopped: ended ? `nothing since ${ended}, ${fmtAge(tile.updateAgeMin)} ago` : 'nothing in the last 24h',
+    failing: `${fmtInt(tile.failed24)} of the files in the last 24h did not parse`,
+    nofiles: tile.inCatalog ? 'in the catalog, never a file in the feed' : 'no file in the feed',
     legacy: 'publishes files under a name the catalog does not list, usually a rename',
     alias: tile.alias ? `same files as ${tile.alias}, published under the pre-rename path` : 'same files as another collector',
     retired: tile.deactivated ? `deactivated ${dateOnly(tile.deactivated)} in the catalog` : 'deactivated',
   };
   return el('span', { class: 'status' }, [
     dotEl(tile.health),
-    el('span', { text: HEALTH[tile.health].label }),
+    el('span', { text: stateLabel(tile) }),
     el('span', { class: 'muted', text: ` · ${notes[tile.health]}` }),
   ]);
 }
@@ -2008,6 +2037,7 @@ function openDetail(name, trigger) {
   if (!tile) return;
 
   state.lastFocus = trigger instanceof HTMLElement ? trigger : document.activeElement;
+  state.detailName = name;
   const seq = ++state.detailSeq;
 
   const drawer = $('#detail');
@@ -2020,7 +2050,7 @@ function openDetail(name, trigger) {
   setHash(tile.name);
 
   $('#detail-title').textContent = tile.name;
-  $('#detail-sub').textContent = `${tile.project || 'not in catalog'} · ${tile.country || '—'} · ${HEALTH[tile.health].label}`;
+  $('#detail-sub').textContent = `${tile.project || 'not in catalog'} · ${tile.country || '—'} · ${stateLabel(tile)}`;
 
   const body = $('#detail-body');
   const spec = windowSpec();
@@ -2152,18 +2182,25 @@ function issueWhy(tile) {
   if (tile.health === 'late') {
     return `The newest file is older than twice this collector's publishing cadence plus the usual publication lag.`;
   }
+  if (tile.health === 'failing') {
+    return `${fmtInt(tile.failed24)} of the ${fmtInt(tile.expected24)} files in the last 24 hours arrived and did not parse.`;
+  }
   if (tile.health === 'partial') {
     return `${fmtInt(tile.failed24)} file${num(tile.failed24) === 1 ? '' : 's'} from the last 24 hours did not parse; the rest arrived.`;
   }
-  if (tile.health === 'nofiles') {
+  if (tile.health === 'stopped') {
     const newest = tile.newestUpdate || tile.newestRib;
-    if (!newest) return 'No file from this collector appears in the file feed at all.';
+    const cadence = cadenceOf(tile.project);
+    if (!newest) return 'No file from this collector arrived in the last 24 hours.';
     const ended = dayStamp(newest.ts_end || newest.ts_start);
-    const lead = `Nothing from this collector was parsed in the last 24 hours. The newest file in the feed ended ${ended}.`;
-    if (num(tile.failed24) > 0) {
-      return `${lead} ${fmtInt(tile.failed24)} file${num(tile.failed24) === 1 ? '' : 's'} are listed in the last 24 hours and failed to parse.`;
-    }
-    return lead;
+    const lead = `The newest updates file ended ${ended}, ${fmtAge(tile.updateAgeMin)} ago.`;
+    if (!cadence || tile.updateAgeMin === null) return lead;
+    const missed = Math.max(0, Math.round(tile.updateAgeMin / cadence.updates) - 1);
+    return `${lead} ${projectLabel(tile.project)} publishes one file every ${fmtCadence(cadence.updates)}, so about ${fmtInt(missed)} files have not been published since.`;
+  }
+  if (tile.health === 'nofiles') {
+    const since = tile.activated ? ` since ${dateOnly(tile.activated)}` : '';
+    return `The feed holds no file for this collector at all, and the catalog has listed it${since}.`;
   }
   return '';
 }
@@ -2197,7 +2234,14 @@ function issueBlock(tile) {
       }),
       el('span', {
         class: 'issue-meta',
-        text: `${projectLabel(tile.project)} · ${tile.country ? countryLabel(tile.country) : 'no country'} · ${HEALTH[tile.health].label}`,
+        text: `${projectLabel(tile.project)} · ${tile.country ? countryLabel(tile.country) : 'no country'} · ${stateLabel(tile)}`,
+      }),
+      el('button', {
+        class: 'issue-share',
+        type: 'button',
+        text: 'share image',
+        title: 'save a PNG of this collector for a chat or a mail',
+        onclick: (event) => shareCollectorImage(tile.name, event.currentTarget),
       }),
     ]),
     el('dl', { class: 'kv' }, rows),
@@ -2281,6 +2325,307 @@ function applyIssueFilter() {
 function closeOpenDialog() {
   if ($('#issue').dataset.open === 'true') closeIssue();
   else closeDetail();
+}
+
+/* ---------- share card ---------- */
+
+/// One collector's delivery as a PNG, for a chat or a mail. Every field on the card comes from the
+/// responses the page already holds, so the picture cannot claim more than the page does: no server
+/// renderer, no dependency, one 1200x640 canvas drawn from an SVG string.
+const CARD_W = 1200;
+const CARD_H = 640;
+const CARD_COLOR = {
+  paper: '#f7f5ee',
+  ink: '#171610',
+  ink2: '#3d3a31',
+  muted: '#6f6a5c',
+  faint: '#9a9484',
+  rule: '#d8d3c2',
+  track: '#e8e3d4',
+  empty: '#efd8d2',
+  fail: '#a02517',
+  stale: '#9a5a06',
+  accent: '#1f4e8c',
+  ok: '#2f6b4a',
+};
+
+/// A headline a reader can act on. The state word alone ("stopped") is the tile's job; the card
+/// says what stopped, because it travels without the page around it.
+const CARD_STATE = {
+  stopped: 'stopped publishing',
+  failing: 'files are not parsing',
+  nofiles: 'no files at all',
+  late: 'publishing late',
+  partial: 'partial delivery',
+  pending: 'not fetched yet',
+  alias: 'duplicate archive',
+  legacy: 'renamed collector',
+  retired: 'deactivated',
+  ok: 'publishing normally',
+};
+
+const xmlEscape = (value) =>
+  String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+
+/// Manual wrapping: SVG has no line breaking, and a card whose sentence runs off the canvas is
+/// worse than no card at all.
+function cardWrap(text, max = 96) {
+  const lines = [];
+  let line = '';
+  for (const word of String(text || '').split(/\s+/)) {
+    if (!word) continue;
+    if (line && (line + ' ' + word).length > max) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = line ? `${line} ${word}` : word;
+    }
+  }
+  if (line) lines.push(line);
+  return lines.slice(0, 3);
+}
+
+/// Fourteen days of parsed files, one entry per UTC day, zero-filled so a stopped collector shows
+/// days of nothing rather than a shorter strip.
+function cardDays(data, count = 14) {
+  const rows = Array.isArray(data && data.data) ? data.data : [];
+  const byDay = new Map();
+  for (const row of rows) {
+    const key = String(row.bucket_start || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) continue;
+    let entry = byDay.get(key);
+    if (!entry) {
+      entry = { files: 0, expected: 0 };
+      byDay.set(key, entry);
+    }
+    entry.files += num(row.files);
+    entry.expected += num(row.expected_files);
+  }
+  const midnight = Math.floor(Date.now() / 86400000) * 86400000;
+  const days = [];
+  for (let i = count - 1; i >= 0; i -= 1) {
+    const ms = midnight - i * 86400000;
+    const key = new Date(ms).toISOString().slice(0, 10);
+    const entry = byDay.get(key) || { files: 0, expected: 0 };
+    days.push({ ms, key, files: entry.files, expected: entry.expected });
+  }
+  return days;
+}
+
+function cardStatement(tile) {
+  // The card's own sub-line already dates the stop, so the sentence here explains the size of it
+  // instead of repeating the timestamp.
+  if (tile.health === 'stopped') {
+    const cadence = cadenceOf(tile.project);
+    if (!cadence || tile.updateAgeMin === null) return 'No file from this collector arrived in the last 24 hours.';
+    const missed = Math.max(0, Math.round(tile.updateAgeMin / cadence.updates) - 1);
+    return `${projectLabel(tile.project)} publishes one file every ${fmtCadence(cadence.updates)}. About ${fmtInt(missed)} files have not been published since the last one.`;
+  }
+  const why = issueWhy(tile);
+  if (why) return why;
+  if (tile.health === 'ok') return `${fmtInt(tile.files24)} files arrived in the last 24 hours and all of them parsed.`;
+  return '';
+}
+
+/// A card is read out of context, so its headers and footers carry the year: "09 Nov" alone is
+/// ambiguous on a screenshot that outlives the month.
+function cardStamp(value) {
+  const date = asUtc(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  const hh = String(date.getUTCHours()).padStart(2, '0');
+  const mm = String(date.getUTCMinutes()).padStart(2, '0');
+  return `${dateOnly(date)} ${hh}:${mm}Z`;
+}
+
+function cardSvg(tile, data) {
+  const days = cardDays(data);
+  const statement = cardWrap(cardStatement(tile));
+  const accent = tile.health === 'ok' ? CARD_COLOR.ok
+    : tile.health === 'late' || tile.health === 'partial' ? CARD_COLOR.stale
+      : tile.health === 'alias' || tile.health === 'legacy' || tile.health === 'retired' ? CARD_COLOR.muted
+        : CARD_COLOR.fail;
+  const parts = [];
+  const text = (x, y, value, attrs = '') =>
+    parts.push(`<text x="${x}" y="${y}" ${attrs}>${xmlEscape(value)}</text>`);
+
+  parts.push(`<rect width="${CARD_W}" height="${CARD_H}" fill="${CARD_COLOR.paper}"/>`);
+  // Masthead
+  text(64, 60, 'BGPKIT', `font-family="Georgia, 'Times New Roman', serif" font-size="30" fill="${CARD_COLOR.ink}"`);
+  text(64, 84, 'BROKER STATUS', `font-family="ui-monospace, Menlo, monospace" font-size="11" letter-spacing="3" fill="${CARD_COLOR.muted}"`);
+  text(CARD_W - 64, 58, tile.name, `font-family="ui-monospace, Menlo, monospace" font-size="20" text-anchor="end" fill="${CARD_COLOR.ink}"`);
+  text(
+    CARD_W - 64,
+    82,
+    `${projectLabel(tile.project)} · ${tile.country || 'no country'} · ${cardStamp(newestFeedStamp(tile))}`,
+    `font-family="ui-monospace, Menlo, monospace" font-size="11" letter-spacing="1.2" text-anchor="end" fill="${CARD_COLOR.muted}"`
+  );
+  parts.push(`<line x1="64" y1="104" x2="${CARD_W - 64}" y2="104" stroke="${CARD_COLOR.rule}"/>`);
+
+  // Headline
+  parts.push(`<circle cx="71" cy="163" r="7" fill="${accent}"/>`);
+  text(92, 178, CARD_STATE[tile.health] || tile.health,
+    `font-family="Georgia, 'Times New Roman', serif" font-size="44" fill="${CARD_COLOR.ink}"`);
+  const sub = [
+    tile.health === 'stopped' && tile.newestUpdate ? `newest file ended ${dayStamp(tile.newestUpdate.ts_end || tile.newestUpdate.ts_start)}` : null,
+    tile.updateAgeMin !== null ? `updates ${fmtAge(tile.updateAgeMin)} old` : null,
+    tile.ribAgeMin !== null ? `RIB ${fmtAge(tile.ribAgeMin)} old` : null,
+  ].filter(Boolean).join(' · ');
+  if (sub) text(92, 210, sub, `font-family="ui-monospace, Menlo, monospace" font-size="13" fill="${CARD_COLOR.muted}"`);
+
+  statement.forEach((line, index) => {
+    text(64, 258 + index * 27, line,
+      `font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif" font-size="19" fill="${CARD_COLOR.ink2}"`);
+  });
+
+  // Fourteen-day strip. The track is the archive's own expectation for that day, so an empty track
+  // means nothing was published, not that nothing was parsed.
+  const barTop = 392;
+  const barBase = 470;
+  const barW = 44;
+  const gap = 10;
+  text(64, 340, `UPDATES FILES PER DAY · ${dayLabel(days[0].ms)} to ${dayLabel(days[days.length - 1].ms)}`,
+    `font-family="ui-monospace, Menlo, monospace" font-size="11" letter-spacing="2" fill="${CARD_COLOR.muted}"`);
+  // Three swatches, because a brown bar and a red tick mean nothing without them. The empty swatch
+  // is drawn the way the empty days are drawn (a track with a red baseline), not as a solid red
+  // block the chart never shows.
+  const legend = [
+    [CARD_COLOR.accent, 'complete', 812],
+    [CARD_COLOR.stale, 'partial', 908],
+    [null, 'nothing published', 995],
+  ];
+  legend.forEach(([fill, label, x]) => {
+    if (fill) {
+      parts.push(`<rect x="${x}" y="331" width="9" height="9" fill="${fill}"/>`);
+    } else {
+      parts.push(`<rect x="${x}" y="331" width="9" height="9" fill="${CARD_COLOR.empty}"/>`);
+      parts.push(`<rect x="${x}" y="336" width="9" height="4" fill="${CARD_COLOR.fail}"/>`);
+    }
+    text(x + 14, 340, label, `font-family="ui-monospace, Menlo, monospace" font-size="10" fill="${CARD_COLOR.muted}"`);
+  });
+  days.forEach((day, index) => {
+    const x = 64 + index * (barW + gap);
+    const ratio = day.expected > 0 ? Math.min(1, day.files / day.expected) : day.files > 0 ? 1 : 0;
+    const height = day.files > 0 ? Math.max(4, Math.round(ratio * (barBase - barTop))) : 3;
+    const fill = day.files > 0 ? (ratio >= 0.999 ? CARD_COLOR.accent : CARD_COLOR.stale) : CARD_COLOR.fail;
+    // A day with no files keeps its track but tints it, so "nothing published" is a day that
+    // exists and is empty, not a bar of zero height that reads as a rendering gap.
+    parts.push(`<rect x="${x}" y="${barTop}" width="${barW}" height="${barBase - barTop}" fill="${day.files > 0 ? CARD_COLOR.track : CARD_COLOR.empty}"/>`);
+    parts.push(`<rect x="${x}" y="${barBase - height}" width="${barW}" height="${height}" fill="${fill}"/>`);
+    const dayOfMonth = new Date(day.ms).getUTCDate();
+    text(x + barW / 2, barBase + 20, String(dayOfMonth),
+      `font-family="ui-monospace, Menlo, monospace" font-size="10" text-anchor="middle" fill="${CARD_COLOR.faint}"`);
+  });
+  const parsed = days.reduce((sum, day) => sum + day.files, 0);
+  const expected = days.reduce((sum, day) => sum + day.expected, 0);
+  text(64, barBase + 44, `${fmtInt(parsed)} parsed of ${fmtInt(expected)} files the archive published in these 14 days`,
+    `font-family="ui-monospace, Menlo, monospace" font-size="11" fill="${CARD_COLOR.muted}"`);
+
+  // Right column: the three readings somebody asks for after "when did it stop".
+  const stats = [
+    ['LAST UPDATES FILE', tile.newestUpdate ? dayStamp(tile.newestUpdate.ts_end || tile.newestUpdate.ts_start) : 'none in the feed', tile.updateAgeMin !== null ? `${fmtAge(tile.updateAgeMin)} ago` : ''],
+    ['LAST RIB FILE', tile.newestRib ? dayStamp(tile.newestRib.ts_end || tile.newestRib.ts_start) : 'none in the feed', tile.ribAgeMin !== null ? `${fmtAge(tile.ribAgeMin)} ago` : ''],
+    ['FILES PARSED · 24H', tile.files24 === null ? '0' : fmtInt(tile.files24), num(tile.expected24) > 0 ? `of ${fmtInt(tile.expected24)} expected` : ''],
+  ];
+  stats.forEach(([label, value, note], index) => {
+    const y = 388 + index * 56;
+    text(880, y, label, `font-family="ui-monospace, Menlo, monospace" font-size="10" letter-spacing="1.6" fill="${CARD_COLOR.muted}"`);
+    text(880, y + 23, value, `font-family="ui-monospace, Menlo, monospace" font-size="17" fill="${CARD_COLOR.ink}"`);
+    if (note) text(880, y + 41, note, `font-family="ui-monospace, Menlo, monospace" font-size="11" fill="${CARD_COLOR.faint}"`);
+  });
+
+  parts.push(`<line x1="64" y1="566" x2="${CARD_W - 64}" y2="566" stroke="${CARD_COLOR.rule}"/>`);
+  text(64, 592, 'broker.bgpkit.com', `font-family="ui-monospace, Menlo, monospace" font-size="11" fill="${CARD_COLOR.faint}"`);
+  text(CARD_W - 64, 592, 'one collector\'s file delivery, not the global routing table',
+    `font-family="ui-monospace, Menlo, monospace" font-size="11" text-anchor="end" fill="${CARD_COLOR.faint}"`);
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${CARD_W}" height="${CARD_H}" viewBox="0 0 ${CARD_W} ${CARD_H}">${parts.join('')}</svg>`;
+}
+
+/// The snapshot every age on the page is measured from: the file feed's own generation time.
+function newestFeedStamp(tile) {
+  const feed = state.sources.latest;
+  const at = feed && !feed.error && feed.data && feed.data.meta ? feed.data.meta.generated_at : null;
+  return at || (tile ? tile.lastBucket : null) || new Date();
+}
+
+function svgToPngBlob(svg, scale = 2) {
+  return new Promise((resolve, reject) => {
+    const source = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(source);
+    const image = new Image();
+    image.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = CARD_W * scale;
+      canvas.height = CARD_H * scale;
+      const context = canvas.getContext('2d');
+      context.scale(scale, scale);
+      context.drawImage(image, 0, 0, CARD_W, CARD_H);
+      URL.revokeObjectURL(url);
+      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('the canvas produced no image'))), 'image/png');
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('the card could not be rendered'));
+    };
+    image.src = url;
+  });
+}
+
+/// Save the card, and copy it to the clipboard when the browser allows an image write. The
+/// download is not conditional: permission for the clipboard is per-site and often denied, and a
+/// silent nothing after a click is worse than a duplicate.
+async function shareCollectorImage(name, trigger) {
+  const tile = state.byName.get(name);
+  if (!tile) return;
+  const button = trigger instanceof HTMLElement ? trigger : null;
+  const label = button ? button.textContent : '';
+  const settle = (message) => {
+    if (!button) return;
+    button.textContent = message;
+    button.disabled = message === 'rendering';
+    if (message !== 'rendering') {
+      window.setTimeout(() => {
+        button.textContent = label;
+        button.disabled = false;
+      }, 2600);
+    }
+  };
+  settle('rendering');
+  try {
+    const midnight = Math.floor(Date.now() / 86400000) * 86400000;
+    const iso = (ms) => new Date(ms).toISOString().slice(0, 19) + 'Z';
+    const data = await api('/v4/mrt/counts', {
+      since: iso(midnight - 13 * 86400000),
+      until: iso(Date.now()),
+      bucket: 'day',
+      dimension: 'collector',
+      collector: name,
+    });
+    const blob = await svgToPngBlob(cardSvg(tile, data));
+    let copied = false;
+    if (window.isSecureContext && navigator.clipboard && window.ClipboardItem) {
+      try {
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        copied = true;
+      } catch {
+        copied = false;
+      }
+    }
+    const url = URL.createObjectURL(blob);
+    const anchor = el('a', { href: url, download: `bgpkit-${name}-${new Date().toISOString().slice(0, 10)}.png` });
+    anchor.style.display = 'none';
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 30000);
+    settle(copied ? 'saved + copied' : 'saved');
+  } catch (error) {
+    settle('share failed');
+  }
 }
 
 function onKeydown(event) {
@@ -2732,6 +3077,7 @@ function wireEvents() {
 
   $('#f-reset').addEventListener('click', resetFilters);
   $('#detail-close').addEventListener('click', () => closeDetail());
+  $('#detail-share').addEventListener('click', (event) => shareCollectorImage(state.detailName, event.currentTarget));
   $('#issue-close').addEventListener('click', () => closeIssue());
   $('#issue-filter').addEventListener('click', applyIssueFilter);
   $('#scrim').addEventListener('click', closeOpenDialog);

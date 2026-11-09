@@ -240,6 +240,8 @@ a:hover { color: var(--accent-ink); }
 }
 .dot[data-health="ok"] { background: var(--ok); }
 .dot[data-health="late"] { background: var(--stale); box-shadow: 0 0 0 1.5px rgba(154, 90, 6, 0.18); }
+.dot[data-health="stopped"] { background: var(--fail); box-shadow: 0 0 0 1.5px rgba(160, 37, 23, 0.28); }
+.dot[data-health="failing"] { background: var(--fail); }
 .dot[data-health="nofiles"] { background: var(--fail); box-shadow: 0 0 0 1.5px rgba(160, 37, 23, 0.18); }
 
 .dot[data-health="unknown"] { background: var(--unknown); }
@@ -1128,6 +1130,27 @@ col.rf-open { width: 10%; }
 .attention-item[data-health="late"],
 .attention-item[data-health="partial"] { color: var(--stale); }
 .attention-item[data-health="pending"] { color: var(--muted); }
+
+/* ---------- share ---------- */
+
+/* One button in the collector modal head and one per issue row: the picture is the point of the
+   dialog, so saving it is one click from either place. */
+.drawer-actions { display: flex; align-items: center; gap: 8px; }
+.share, .issue-share {
+  font: 9px var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  background: var(--panel);
+  border: 1px solid var(--rule-2);
+  border-radius: 2px;
+  padding: 6px 9px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.share:hover, .issue-share:hover { border-color: var(--muted); color: var(--ink); }
+.share:disabled, .issue-share:disabled { opacity: 0.55; cursor: progress; }
+.issue-share { margin-left: auto; padding: 4px 7px; }
 
 /* ---------- issue dialog ---------- */
 
