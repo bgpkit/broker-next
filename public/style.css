@@ -1378,8 +1378,9 @@ col.rf-open { width: 10%; }
 
 /* ---------- alerts page ---------- */
 
-.alerts-page .masthead { padding-bottom: 10px; border-bottom: 1px solid var(--rule); }
-.alerts-page h1 { font: 400 26px/1.15 var(--serif); margin: 4px 0 8px; }
+/* The alerts page wears the same masthead as the status page: same meta row, same wordmark, same
+   claim slot. Only the claim text and the lede differ. */
+.alerts-page .lede { margin: 12px 0 8px; }
 .alerts-page h2 {
   font: 11px/1 var(--mono);
   letter-spacing: 0.1em;
@@ -1387,7 +1388,7 @@ col.rf-open { width: 10%; }
   color: var(--muted);
   margin: 26px 0 8px;
 }
-.alerts-page .lede { max-width: 62ch; color: var(--ink-2); margin: 0 0 10px; }
+.alerts-page .lede { max-width: 62ch; color: var(--ink-2); }
 .alerts-page .back { margin: 0; font: 10px/1.5 var(--mono); }
 .alerts-page .back a { color: var(--accent); }
 .alerts-page .back .as-of { margin-left: 10px; color: var(--faint); }
