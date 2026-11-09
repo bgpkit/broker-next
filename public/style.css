@@ -1104,6 +1104,36 @@ col.rf-open { width: 10%; }
 }
 .tip-row.tip-reset span:last-child { color: #a4243b; }
 
+/* ---------- alerts inside the collector drawer ---------- */
+
+.detail-alerts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.detail-alert {
+  display: grid;
+  grid-template-columns: 7ch 1fr auto;
+  gap: 8px;
+  align-items: baseline;
+  padding: 4px 0;
+  border-top: 1px solid var(--rule);
+  font: 10px/1.5 var(--mono);
+}
+.detail-alert:first-child { border-top: 0; }
+.detail-alert.is-closed { color: var(--faint); }
+.da-sev {
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.detail-alert.is-critical .da-sev { color: var(--fail); }
+.detail-alert.is-warning .da-sev { color: var(--stale); }
+.detail-alert.is-closed .da-sev { color: var(--faint); }
+.da-what { color: var(--ink-2); }
+.detail-alert.is-closed .da-what { color: var(--muted); }
+.da-when { color: var(--faint); text-align: right; }
+
 /* ---------- fleet attention line ---------- */
 
 /* Renders only when a collector state needs a look (no files, late, partial, pending); an ok

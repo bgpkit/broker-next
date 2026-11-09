@@ -2212,6 +2212,52 @@ const RECENT_ROWS = 20;
 
 /// The file-processing index, newest first, one page. This is the ledger behind the tile counts:
 /// every row is one archive file with its window, its parse cost and where it can be opened.
+/// One collector's alerts, newest first and open before closed. The rows come from the same ledger
+/// the alerts page reads, so a reader never sees two versions of the same fact.
+function renderCollectorAlerts(target, data, name) {
+  const rows = Array.isArray(data && data.data) ? data.data : [];
+  const open = rows.filter((row) => row.state !== 'resolved' && row.state !== 'superseded');
+  target.src.textContent = `alert ledger · ${fmtInt(rows.length)} in 30 days · ${fmtInt(open.length)} open`;
+
+  if (!rows.length) {
+    target.body.replaceChildren(
+      el('div', { class: 'empty-state', text: `No alerts for ${name} in the last 30 days.` })
+    );
+    return;
+  }
+
+  const rank = { critical: 0, warning: 1 };
+  const closed = (row) => row.state === 'resolved' || row.state === 'superseded';
+  const sorted = [...rows].sort(
+    (a, b) =>
+      Number(closed(a)) - Number(closed(b)) ||
+      (rank[a.severity] ?? 9) - (rank[b.severity] ?? 9) ||
+      Date.parse(b.onset) - Date.parse(a.onset)
+  );
+
+  const label = (row) => {
+    const stream = row.data_type === 'rib' ? 'RIB dumps' : 'updates';
+    if (row.state === 'resolved') return `${stream} resumed`;
+    if (row.state === 'superseded') return `${stream} late, escalated`;
+    if (row.severity === 'warning') return `${stream} late`;
+    return `${stream} stopped`;
+  };
+
+  target.body.replaceChildren(
+    el('ul', { class: 'detail-alerts' },
+      sorted.map((row) => {
+        const since = Date.parse(row.onset);
+        const age = Number.isFinite(since) ? (Date.now() - since) / 60000 : null;
+        return el('li', { class: `detail-alert is-${row.severity}${closed(row) ? ' is-closed' : ''}` }, [
+          el('span', { class: 'da-sev', text: row.severity }),
+          el('span', { class: 'da-what', text: label(row) }),
+          el('span', { class: 'da-when', text: `${stampWords(row.onset)} · ${ageWords(age)}` }),
+        ]);
+      })
+    )
+  );
+}
+
 function renderRecentFiles(target, data, name) {
   const rows = Array.isArray(data && data.data) ? data.data : [];
   // Above a million matching files the API answers a sampled total; mark it so the caption does
@@ -2314,11 +2360,14 @@ function openDetail(name, trigger) {
   // The file-processing index page: the ledger behind the tile counts, newest first. One request
   // per drawer open, and only the page the drawer shows.
   const recent = section('Recent files', `recent files · newest ${fmtInt(RECENT_ROWS)} · queued`);
+  // What the ledger says about this collector: the same rows the alerts page and the feed read, so
+  // a reader who opened a tile can see why it looks the way it does without leaving the page.
+  const alerts = section('Alerts · last 30 days', 'alert ledger · queued');
   // Tables on the left, charts on the right: Identity and the newest-file table are read as
   // rows, the delivery sparkline and the two facet panels are read as shapes.
   body.replaceChildren(
     el('div', { class: 'detail-cols' }, [
-      el('div', { class: 'detail-col' }, [identitySection(tile), newest.node]),
+      el('div', { class: 'detail-col' }, [identitySection(tile), alerts.node, newest.node]),
       el('div', { class: 'detail-col' }, [delivery.node, facets.node]),
     ]),
     recent.node,
@@ -2336,6 +2385,14 @@ function openDetail(name, trigger) {
     })
     .catch((error) => {
       if (seq === state.detailSeq) renderFailure(peers, 'peer list', error);
+    });
+
+  api('/v4/meta/alerts', { collector: name })
+    .then((data) => {
+      if (seq === state.detailSeq) renderCollectorAlerts(alerts, data, name);
+    })
+    .catch((error) => {
+      if (seq === state.detailSeq) renderFailure(alerts, 'alert ledger', error);
     });
 
   api('/v4/mrt/files', { page_size: RECENT_ROWS, collector: name })
