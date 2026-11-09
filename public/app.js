@@ -2448,7 +2448,7 @@ function closeOpenDialog() {
 /// responses the page already holds, so the picture cannot claim more than the page does: no server
 /// renderer, no dependency, one 1200x640 canvas drawn from an SVG string.
 const CARD_W = 1200;
-const CARD_H = 640;
+const CARD_H = 720;
 const CARD_COLOR = {
   paper: '#f7f5ee',
   ink: '#171610',
@@ -2531,18 +2531,28 @@ function cardDays(data, count = 14) {
   return days;
 }
 
-function cardStatement(tile) {
-  // The card's own sub-line already dates the stop, so the sentence here explains the size of it
-  // instead of repeating the timestamp.
-  if (tile.health === 'stopped') {
-    const cadence = cadenceOf(tile.project);
-    if (!cadence || tile.updateAgeMin === null) return 'No file from this collector arrived in the last 24 hours.';
-    const missed = Math.max(0, Math.round(tile.updateAgeMin / cadence.updates) - 1);
-    return `${projectLabel(tile.project)} publishes one file every ${fmtCadence(cadence.updates)}. About ${fmtInt(missed)} files have not been published since the last one.`;
+function cardStatement(tile, totals) {
+  const cadence = cadenceOf(tile.project);
+  const missedOf = (ageMin, everyMin) =>
+    (ageMin === null || !everyMin ? null : Math.max(0, Math.round(ageMin / everyMin) - 1));
+  // The card's own sub-line already dates the stop, so the sentence explains the size of it, in
+  // both kinds: a collector that stops publishing updates usually stops publishing dumps too, and
+  // the card has to say so rather than implying only one stream went quiet.
+  if (tile.health === 'stopped' && cadence) {
+    const missedUpdates = missedOf(tile.updateAgeMin, cadence.updates);
+    const missedRibs = missedOf(tile.ribAgeMin, cadence.rib);
+    const short = [];
+    if (missedUpdates) short.push(`about ${fmtInt(missedUpdates)} update files`);
+    if (missedRibs) short.push(`${fmtInt(missedRibs)} RIB dump${missedRibs === 1 ? '' : 's'}`);
+    if (short.length) {
+      return `${projectLabel(tile.project)} publishes updates every ${fmtCadence(cadence.updates)} and a dump every ${fmtCadence(cadence.rib)}. Since the newest files, ${short.join(' and ')} have not been published.`;
+    }
   }
   const why = issueWhy(tile);
   if (why) return why;
-  if (tile.health === 'ok') return `${fmtInt(tile.files24)} files arrived in the last 24 hours and all of them parsed.`;
+  if (tile.health === 'ok' && totals) {
+    return `${fmtInt(totals.updates.parsed)} of ${fmtInt(totals.updates.expected)} update files and ${fmtInt(totals.ribs.parsed)} of ${fmtInt(totals.ribs.expected)} RIB dumps parsed in these 14 days.`;
+  }
   return '';
 }
 
@@ -2556,9 +2566,16 @@ function cardStamp(value) {
   return `${dateOnly(date)} ${hh}:${mm}Z`;
 }
 
-function cardSvg(tile, data) {
-  const days = cardDays(data);
-  const statement = cardWrap(cardStatement(tile));
+function cardSvg(tile, updatesData, ribsData) {
+  // Both kinds, side by side. A collector's updates and its dumps fail independently, and a card
+  // that drew only the update strip said "stopped publishing" while its RIB row went unexamined.
+  const updateDays = cardDays(updatesData);
+  const ribDays = cardDays(ribsData);
+  const totals = {
+    updates: { parsed: updateDays.reduce((sum, day) => sum + day.files, 0), expected: updateDays.reduce((sum, day) => sum + day.expected, 0) },
+    ribs: { parsed: ribDays.reduce((sum, day) => sum + day.files, 0), expected: ribDays.reduce((sum, day) => sum + day.expected, 0) },
+  };
+  const statement = cardWrap(cardStatement(tile, totals));
   const accent = tile.health === 'ok' ? CARD_COLOR.ok
     : tile.health === 'late' || tile.health === 'partial' ? CARD_COLOR.stale
       : tile.health === 'alias' || tile.health === 'legacy' || tile.health === 'retired' ? CARD_COLOR.muted
@@ -2566,17 +2583,19 @@ function cardSvg(tile, data) {
   const parts = [];
   const text = (x, y, value, attrs = '') =>
     parts.push(`<text x="${x}" y="${y}" ${attrs}>${xmlEscape(value)}</text>`);
+  const mono = (size, fill, extra = '') =>
+    `font-family="ui-monospace, Menlo, monospace" font-size="${size}" ${extra} fill="${fill}"`;
 
   parts.push(`<rect width="${CARD_W}" height="${CARD_H}" fill="${CARD_COLOR.paper}"/>`);
   // Masthead
   text(64, 60, 'BGPKIT', `font-family="Georgia, 'Times New Roman', serif" font-size="30" fill="${CARD_COLOR.ink}"`);
-  text(64, 84, 'BROKER STATUS', `font-family="ui-monospace, Menlo, monospace" font-size="11" letter-spacing="3" fill="${CARD_COLOR.muted}"`);
-  text(CARD_W - 64, 58, tile.name, `font-family="ui-monospace, Menlo, monospace" font-size="20" text-anchor="end" fill="${CARD_COLOR.ink}"`);
+  text(64, 84, 'BROKER STATUS', mono(11, CARD_COLOR.muted, 'letter-spacing="3"'));
+  text(CARD_W - 64, 58, tile.name, mono(20, CARD_COLOR.ink, 'text-anchor="end"'));
   text(
     CARD_W - 64,
     82,
     `${projectLabel(tile.project)} · ${tile.country || 'no country'} · ${cardStamp(newestFeedStamp(tile))}`,
-    `font-family="ui-monospace, Menlo, monospace" font-size="11" letter-spacing="1.2" text-anchor="end" fill="${CARD_COLOR.muted}"`
+    mono(11, CARD_COLOR.muted, 'letter-spacing="1.2" text-anchor="end"')
   );
   parts.push(`<line x1="64" y1="104" x2="${CARD_W - 64}" y2="104" stroke="${CARD_COLOR.rule}"/>`);
 
@@ -2585,77 +2604,78 @@ function cardSvg(tile, data) {
   text(92, 178, CARD_STATE[tile.health] || tile.health,
     `font-family="Georgia, 'Times New Roman', serif" font-size="44" fill="${CARD_COLOR.ink}"`);
   const sub = [
-    tile.health === 'stopped' && tile.newestUpdate ? `newest file ended ${dayStamp(tile.newestUpdate.ts_end || tile.newestUpdate.ts_start)}` : null,
+    tile.health === 'stopped' && tile.newestUpdate ? `newest updates file ended ${dayStamp(tile.newestUpdate.ts_end || tile.newestUpdate.ts_start)}` : null,
+    tile.health === 'stopped' && tile.newestRib ? `newest RIB ended ${dayStamp(tile.newestRib.ts_end || tile.newestRib.ts_start)}` : null,
     tile.updateAgeMin !== null ? `updates ${fmtAge(tile.updateAgeMin)} old` : null,
     tile.ribAgeMin !== null ? `RIB ${fmtAge(tile.ribAgeMin)} old` : null,
   ].filter(Boolean).join(' · ');
-  if (sub) text(92, 210, sub, `font-family="ui-monospace, Menlo, monospace" font-size="13" fill="${CARD_COLOR.muted}"`);
+  if (sub) text(92, 210, sub, mono(13, CARD_COLOR.muted));
 
   statement.forEach((line, index) => {
-    text(64, 258 + index * 27, line,
+    text(64, 244 + index * 26, line,
       `font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif" font-size="19" fill="${CARD_COLOR.ink2}"`);
   });
 
-  // Fourteen-day strip. The track is the archive's own expectation for that day, so an empty track
-  // means nothing was published, not that nothing was parsed.
-  const barTop = 392;
-  const barBase = 470;
-  const barW = 44;
-  const gap = 10;
-  text(64, 340, `UPDATES FILES PER DAY · ${dayLabel(days[0].ms)} to ${dayLabel(days[days.length - 1].ms)}`,
-    `font-family="ui-monospace, Menlo, monospace" font-size="11" letter-spacing="2" fill="${CARD_COLOR.muted}"`);
-  // Three swatches, because a brown bar and a red tick mean nothing without them. The empty swatch
-  // is drawn the way the empty days are drawn (a track with a red baseline), not as a solid red
-  // block the chart never shows.
-  const legend = [
-    [CARD_COLOR.accent, 'complete', 812],
-    [CARD_COLOR.stale, 'partial', 908],
-    [null, 'nothing published', 995],
-  ];
-  legend.forEach(([fill, label, x]) => {
-    if (fill) {
-      parts.push(`<rect x="${x}" y="331" width="9" height="9" fill="${fill}"/>`);
-    } else {
-      parts.push(`<rect x="${x}" y="331" width="9" height="9" fill="${CARD_COLOR.empty}"/>`);
-      parts.push(`<rect x="${x}" y="336" width="9" height="4" fill="${CARD_COLOR.fail}"/>`);
-    }
-    text(x + 14, 340, label, `font-family="ui-monospace, Menlo, monospace" font-size="10" fill="${CARD_COLOR.muted}"`);
-  });
-  days.forEach((day, index) => {
-    const x = 64 + index * (barW + gap);
-    const ratio = day.expected > 0 ? Math.min(1, day.files / day.expected) : day.files > 0 ? 1 : 0;
-    const height = day.files > 0 ? Math.max(4, Math.round(ratio * (barBase - barTop))) : 3;
-    const fill = day.files > 0 ? (ratio >= 0.999 ? CARD_COLOR.accent : CARD_COLOR.stale) : CARD_COLOR.fail;
-    // A day with no files keeps its track but tints it, so "nothing published" is a day that
-    // exists and is empty, not a bar of zero height that reads as a rendering gap.
-    parts.push(`<rect x="${x}" y="${barTop}" width="${barW}" height="${barBase - barTop}" fill="${day.files > 0 ? CARD_COLOR.track : CARD_COLOR.empty}"/>`);
-    parts.push(`<rect x="${x}" y="${barBase - height}" width="${barW}" height="${height}" fill="${fill}"/>`);
-    const dayOfMonth = new Date(day.ms).getUTCDate();
-    text(x + barW / 2, barBase + 20, String(dayOfMonth),
-      `font-family="ui-monospace, Menlo, monospace" font-size="10" text-anchor="middle" fill="${CARD_COLOR.faint}"`);
-  });
-  const parsed = days.reduce((sum, day) => sum + day.files, 0);
-  const expected = days.reduce((sum, day) => sum + day.expected, 0);
-  text(64, barBase + 44, `${fmtInt(parsed)} parsed of ${fmtInt(expected)} files the archive published in these 14 days`,
-    `font-family="ui-monospace, Menlo, monospace" font-size="11" fill="${CARD_COLOR.muted}"`);
+  // Two strips, same scale rule: bar height is parsed over the files the archive published that day,
+  // and the track is the archive's own expectation, so an empty track means nothing was published.
+  const barW = 40;
+  const gap = 8;
+  const strip = (caption, days, topY) => {
+    text(64, topY, caption, mono(11, CARD_COLOR.muted, 'letter-spacing="2"'));
+    const barTop = topY + 14;
+    const barBase = topY + 84;
+    days.forEach((day, index) => {
+      const x = 64 + index * (barW + gap);
+      const ratio = day.expected > 0 ? Math.min(1, day.files / day.expected) : day.files > 0 ? 1 : 0;
+      const height = day.files > 0 ? Math.max(4, Math.round(ratio * (barBase - barTop))) : 3;
+      const fill = day.files > 0 ? (ratio >= 0.999 ? CARD_COLOR.accent : CARD_COLOR.stale) : CARD_COLOR.fail;
+      parts.push(`<rect x="${x}" y="${barTop}" width="${barW}" height="${barBase - barTop}" fill="${day.files > 0 ? CARD_COLOR.track : CARD_COLOR.empty}"/>`);
+      parts.push(`<rect x="${x}" y="${barBase - height}" width="${barW}" height="${height}" fill="${fill}"/>`);
+      text(x + barW / 2, barBase + 17, String(new Date(day.ms).getUTCDate()), mono(10, CARD_COLOR.faint, 'text-anchor="middle"'));
+    });
+    const parsed = days.reduce((sum, day) => sum + day.files, 0);
+    const expected = days.reduce((sum, day) => sum + day.expected, 0);
+    text(64, topY + 118, `${fmtInt(parsed)} parsed · ${fmtInt(expected)} published by the archive`, mono(11, CARD_COLOR.muted));
+    return { parsed, expected };
+  };
 
-  // Right column: the three readings somebody asks for after "when did it stop".
+  const range = `${dayLabel(updateDays[0].ms)} to ${dayLabel(updateDays[updateDays.length - 1].ms)}`;
+  const updatesTotals = strip(`UPDATE FILES PER DAY · ${range}`, updateDays, 336);
+  strip(`RIB FILES PER DAY · ${range}`, ribDays, 496);
+
+  // The legend sits on the first strip's caption line and covers both strips: same three states.
+  [
+    [CARD_COLOR.accent, 'complete', 620],
+    [CARD_COLOR.stale, 'partial', 716],
+    [null, 'nothing published', 800],
+  ].forEach(([fill, label, x]) => {
+    if (fill) {
+      parts.push(`<rect x="${x}" y="327" width="9" height="9" fill="${fill}"/>`);
+    } else {
+      parts.push(`<rect x="${x}" y="327" width="9" height="9" fill="${CARD_COLOR.empty}"/>`);
+      parts.push(`<rect x="${x}" y="332" width="9" height="4" fill="${CARD_COLOR.fail}"/>`);
+    }
+    text(x + 14, 336, label, mono(10, CARD_COLOR.muted));
+  });
+
+  // Right column: one block per thing somebody asks after "when did it stop", both kinds named.
   const stats = [
     ['LAST UPDATES FILE', tile.newestUpdate ? dayStamp(tile.newestUpdate.ts_end || tile.newestUpdate.ts_start) : 'none in the feed', tile.updateAgeMin !== null ? `${fmtAge(tile.updateAgeMin)} ago` : ''],
     ['LAST RIB FILE', tile.newestRib ? dayStamp(tile.newestRib.ts_end || tile.newestRib.ts_start) : 'none in the feed', tile.ribAgeMin !== null ? `${fmtAge(tile.ribAgeMin)} ago` : ''],
-    ['FILES PARSED · 24H', tile.files24 === null ? '0' : fmtInt(tile.files24), num(tile.expected24) > 0 ? `of ${fmtInt(tile.expected24)} expected` : ''],
+    ['UPDATES · 14 DAYS', `${fmtInt(updatesTotals.parsed)} / ${fmtInt(updatesTotals.expected)}`, 'parsed / published'],
+    ['RIB DUMPS · 14 DAYS', `${fmtInt(totals.ribs.parsed)} / ${fmtInt(totals.ribs.expected)}`, 'parsed / published'],
   ];
   stats.forEach(([label, value, note], index) => {
-    const y = 388 + index * 56;
-    text(880, y, label, `font-family="ui-monospace, Menlo, monospace" font-size="10" letter-spacing="1.6" fill="${CARD_COLOR.muted}"`);
-    text(880, y + 23, value, `font-family="ui-monospace, Menlo, monospace" font-size="17" fill="${CARD_COLOR.ink}"`);
-    if (note) text(880, y + 41, note, `font-family="ui-monospace, Menlo, monospace" font-size="11" fill="${CARD_COLOR.faint}"`);
+    const y = 360 + index * 70;
+    text(800, y, label, mono(10, CARD_COLOR.muted, 'letter-spacing="1.6"'));
+    text(800, y + 23, value, mono(17, CARD_COLOR.ink));
+    if (note) text(800, y + 41, note, mono(11, CARD_COLOR.faint));
   });
 
-  parts.push(`<line x1="64" y1="566" x2="${CARD_W - 64}" y2="566" stroke="${CARD_COLOR.rule}"/>`);
-  text(64, 592, 'broker.bgpkit.com', `font-family="ui-monospace, Menlo, monospace" font-size="11" fill="${CARD_COLOR.faint}"`);
-  text(CARD_W - 64, 592, 'one collector\'s file delivery, not the global routing table',
-    `font-family="ui-monospace, Menlo, monospace" font-size="11" text-anchor="end" fill="${CARD_COLOR.faint}"`);
+  parts.push(`<line x1="64" y1="668" x2="${CARD_W - 64}" y2="668" stroke="${CARD_COLOR.rule}"/>`);
+  text(64, 694, 'broker.bgpkit.com', mono(11, CARD_COLOR.faint));
+  text(CARD_W - 64, 694, 'one collector\'s file delivery, not the global routing table',
+    mono(11, CARD_COLOR.faint, 'text-anchor="end"'));
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${CARD_W}" height="${CARD_H}" viewBox="0 0 ${CARD_W} ${CARD_H}">${parts.join('')}</svg>`;
 }
@@ -2713,14 +2733,18 @@ async function shareCollectorImage(name, trigger) {
   try {
     const midnight = Math.floor(Date.now() / 86400000) * 86400000;
     const iso = (ms) => new Date(ms).toISOString().slice(0, 19) + 'Z';
-    const data = await api('/v4/mrt/counts', {
+    const query = {
       since: iso(midnight - 13 * 86400000),
       until: iso(Date.now()),
       bucket: 'day',
       dimension: 'collector',
       collector: name,
-    });
-    const blob = await svgToPngBlob(cardSvg(tile, data));
+    };
+    const [updatesData, ribsData] = await Promise.all([
+      api('/v4/mrt/counts', query),
+      api('/v4/mrt/counts', { ...query, data_type: 'ribs' }),
+    ]);
+    const blob = await svgToPngBlob(cardSvg(tile, updatesData, ribsData));
     let copied = false;
     if (window.isSecureContext && navigator.clipboard && window.ClipboardItem) {
       try {
