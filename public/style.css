@@ -260,7 +260,7 @@ a:hover { color: var(--accent-ink); }
 
 /* ---------- alerts ---------- */
 
-.alerts {
+.upstream-alerts {
   margin-top: 20px;
   border: 1px solid #e2c2b4;
   background: #fbf3ee;
@@ -1270,12 +1270,12 @@ col.rf-open { width: 10%; }
   .issue-foot { flex-direction: column; align-items: flex-start; }
 }
 
-/* ---------- open incidents ---------- */
+/* ---------- open alerts ---------- */
 
-/* The incident ledger's own words, on the page, before the tiles: a collector that stopped
+/* The alert ledger's own words, on the page, before the tiles: a collector that stopped
    publishing is a fact about the archive, not a tile colour. Renders nothing when the ledger is
    empty or unreachable, so a quiet fleet shows no strip at all. */
-.incidents {
+.upstream-alerts {
   margin: 8px 0 0;
   padding: 8px 11px;
   border: 1px solid var(--rule-2);
@@ -1284,13 +1284,13 @@ col.rf-open { width: 10%; }
   font: 10px/1.5 var(--mono);
   color: var(--ink-2);
 }
-.incidents[hidden] { display: none; }
-.incidents .inc-head { color: var(--fail); letter-spacing: 0.08em; text-transform: uppercase; }
-.incidents .inc-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; }
-.incidents .inc-name { font-weight: 600; color: var(--ink); }
-.incidents .inc-state { color: var(--muted); }
-.incidents .inc-feed { margin-left: auto; font-size: 9px; color: var(--faint); }
-.incidents .inc-feed a { color: var(--ink-2); }
+.upstream-alerts[hidden] { display: none; }
+.upstream-alerts .inc-head { color: var(--fail); letter-spacing: 0.08em; text-transform: uppercase; }
+.upstream-alerts .inc-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; }
+.upstream-alerts .inc-name { font-weight: 600; color: var(--ink); }
+.upstream-alerts .inc-state { color: var(--muted); }
+.upstream-alerts .inc-feed { margin-left: auto; font-size: 9px; color: var(--faint); }
+.upstream-alerts .inc-feed a { color: var(--ink-2); }
 
 /* ---------- tile noise ---------- */
 

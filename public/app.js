@@ -790,13 +790,14 @@ function renderAttention(counts) {
   if (issue.health && $('#issue').dataset.open === 'true') renderIssue();
 }
 
-/// The incident ledger, in its own words. This is the only element on the page that quotes an
+/// The alert ledger, in its own words. This is the only element on the page that quotes an
 /// external verdict, so it says nothing the ledger does not: collector, condition, and state. A
-/// missing or failed response hides the block instead of guessing.
-function renderIncidents() {
-  const host = $('#incidents');
+/// missing or failed response hides the block instead of guessing. Not to be confused with the
+/// `#alerts` panel below it, which reports sources this page failed to load.
+function renderUpstreamAlerts() {
+  const host = $('#upstream-alerts');
   if (!host) return;
-  const source = state.sources.incidents;
+  const source = state.sources.upstreamAlerts;
   const rows = source && !source.error && source.data && Array.isArray(source.data.data) ? source.data.data : [];
   if (!rows.length) {
     host.hidden = true;
@@ -804,20 +805,21 @@ function renderIncidents() {
     return;
   }
   const feedLink = el('a', {
-    href: 'https://api.bgpkit.com/feeds/broker/all.atom',
+    href: 'https://api.bgpkit.com/feeds/broker/alerts/all.atom',
     target: '_blank',
     rel: 'noopener noreferrer',
     text: 'atom',
   });
   const detail = el('a', {
-    href: 'https://api.bgpkit.com/v4/meta/incidents',
+    href: 'https://api.bgpkit.com/v4/meta/alerts',
     target: '_blank',
     rel: 'noopener noreferrer',
     text: 'json',
   });
-  const STATE_WORD = { firing: 'firing', recovering: 'recovering', pending: 'pending', held: 'held' };
+  // The page says what a reader can see; `firing` is the ledger's word for it.
+  const STATE_WORD = { firing: 'stopped', recovering: 'resumed', pending: 'pending', held: 'held' };
   host.replaceChildren(
-    el('p', { class: 'inc-head', text: `open incidents · ${fmtInt(rows.length)}` }),
+    el('p', { class: 'inc-head', text: `upstream alerts · ${fmtInt(rows.length)} open` }),
     ...rows.map((row) =>
       el('div', { class: 'inc-row' }, [
         el('span', { class: 'inc-name', text: row.collector }),
@@ -3124,9 +3126,10 @@ async function boot() {
     healthSpec(),
     ...windowSpecs(state.window),
     { key: 'latest', path: '/v4/mrt/collectors/latest', params: {} },
-    // The incident ledger is point-in-time, like the file feed, and optional: without it the page
-    // renders exactly as before.
-    { key: 'incidents', path: '/v4/meta/incidents', params: {} },
+    // The alert ledger is point-in-time, like the file feed, and optional: without it the page
+    // renders exactly as before. Alerts are what the archive did; incidents, which are our own
+    // infrastructure, stay off this page entirely.
+    { key: 'upstreamAlerts', path: '/v4/meta/alerts', params: {} },
   ];
 
   const results = await Promise.all(specs.map(loadSource));
@@ -3138,7 +3141,7 @@ async function boot() {
   buildModel();
   renderHeader();
   renderStrip();
-  renderIncidents();
+  renderUpstreamAlerts();
   renderFleetChart();
   renderRibChart();
   renderProjects();
