@@ -25,6 +25,17 @@
     </header>
 
     <main>
+      <section aria-labelledby="chart-title" class="chart-sec">
+        <h2 id="chart-title">Collectors in alert, per hour</h2>
+        <p class="chart-lede">Each bar counts collectors, not alerts: a collector with both an updates and a RIB alert counts once, and one that escalated counts as stopped for that hour.</p>
+        <div id="chart" class="chart"><p class="alert-empty">loading…</p></div>
+        <p class="chart-legend">
+          <span class="lg lg-crit">stopped</span>
+          <span class="lg lg-warn">late</span>
+          <span class="chart-note" id="chart-note"></span>
+        </p>
+      </section>
+
       <section aria-labelledby="open-title">
         <h2 id="open-title">Open now</h2>
         <div id="open" class="alert-list">

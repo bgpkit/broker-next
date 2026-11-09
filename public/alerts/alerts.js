@@ -124,7 +124,91 @@ function fillCollectorCard(alerts) {
 /// The last response, kept so the ages can be redrawn without asking the API again. Every age on
 /// this page is "how long ago", and a number computed once at load is wrong a minute later.
 let alerts = [];
+let series = [];
+let seriesMeta = { hours: 72 };
 let loadedAt = null;
+
+/// Hours from `count` back to the current one, in the format the series endpoint uses. The API only
+/// returns hours that had something open; the axis needs every hour, because a quiet hour is a fact
+/// and should be drawn as an empty slot rather than collapsed away.
+function hourAxis(count) {
+    const end = new Date();
+    end.setUTCMinutes(0, 0, 0);
+    const pad = (value) => String(value).padStart(2, '0');
+    const out = [];
+    for (let i = count - 1; i >= 0; i -= 1) {
+        const at = new Date(end.getTime() - i * 3600000);
+        out.push({
+            key: `${at.getUTCFullYear()}-${pad(at.getUTCMonth() + 1)}-${pad(at.getUTCDate())}T${pad(at.getUTCHours())}:00:00Z`,
+            at,
+        });
+    }
+    return out;
+}
+
+function renderChart() {
+    const host = document.getElementById('chart');
+    if (!host) return;
+    const note = document.getElementById('chart-note');
+    const hours = Number(seriesMeta.hours) || 72;
+    const projects = [...new Set(series.map((row) => row.project))];
+    if (!projects.length) {
+        host.replaceChildren(el('p', { class: 'alert-empty', text: `No collector was in alert in the last ${hours} hours.` }));
+        if (note) note.textContent = '';
+        return;
+    }
+    // Start where the data starts. The ledger only has a few hours of history so far, and drawing
+    // sixty empty hours beside four full ones hides the shape this chart exists to show.
+    const earliest = Math.min(...series.map((row) => Date.parse(row.hour)).filter(Number.isFinite));
+    const nowHour = new Date();
+    nowHour.setUTCMinutes(0, 0, 0);
+    const spanHours = Math.min(hours, Math.max(6, Math.round((nowHour.getTime() - earliest) / 3600000) + 1));
+    const axis = hourAxis(spanHours);
+    const order = ['route-views', 'ripe-ris'];
+    projects.sort((a, b) => (order.indexOf(a) + 1 || 9) - (order.indexOf(b) + 1 || 9) || a.localeCompare(b));
+
+    const lookup = new Map(series.map((row) => [`${row.project}|${row.hour}`, row]));
+    let peak = 0;
+    for (const row of series) peak = Math.max(peak, row.critical + row.warning);
+    const top = Math.max(1, peak);
+
+    const rows = projects.map((project) => {
+        const bars = axis.map(({ key, at }) => {
+            const hit = lookup.get(`${project}|${key}`) || { critical: 0, warning: 0 };
+            const label = `${stampWords(key)} · ${project} · ${hit.critical} stopped, ${hit.warning} late`;
+            return el('div', { class: 'chart-bar', title: label }, [
+                hit.critical ? el('span', { class: 'crit', style: `height:${(hit.critical / top) * 100}%` }) : null,
+                hit.warning ? el('span', { class: 'warn', style: `height:${(hit.warning / top) * 100}%` }) : null,
+            ]);
+        });
+        const name = project === 'route-views' ? 'route-views' : project === 'ripe-ris' ? 'ripe-ris' : project;
+        // The bars share one scale so the two projects are comparable, which makes a small value a
+        // speck; the number at the end of the row is the current hour, so the reader gets both.
+        const lastKey = axis[axis.length - 1].key;
+        const last = lookup.get(`${project}|${lastKey}`) || { critical: 0, warning: 0 };
+        const current = last.critical ? `${last.critical} stopped` : last.warning ? `${last.warning} late` : 'clear';
+        return el('div', { class: 'chart-row' }, [
+            el('span', { class: 'chart-name', text: name }),
+            el('div', { class: 'chart-bars' }, bars),
+            el('span', { class: 'chart-max', text: current }),
+        ]);
+    });
+
+    // Tick density follows the span: a six-hour window labelled every twelve hours would show one
+    // number, which is how this chart first shipped.
+    const step = spanHours <= 12 ? 2 : spanHours <= 24 ? 4 : spanHours <= 48 ? 6 : 12;
+    const ticks = axis.map(({ at }, index) => {
+        const hour = at.getUTCHours();
+        const show = index === 0 || index === axis.length - 1 || index % step === 0;
+        const label = hour === 0
+            ? `${String(at.getUTCMonth() + 1).padStart(2, '0')}-${String(at.getUTCDate()).padStart(2, '0')} 00:00`
+            : `${String(hour).padStart(2, '0')}:00`;
+        return el('span', { class: 'chart-hour', text: show ? label : '' });
+    });
+
+    host.replaceChildren(...rows, el('div', { class: 'chart-hours' }, ticks));
+    if (note) note.textContent = `peak ${peak} collector${peak === 1 ? '' : 's'} · ${spanHours} h · UTC`;
+}
 
 function render() {
   // Critical first, then the warnings: a reader scanning the page should meet the stopped
@@ -138,6 +222,7 @@ function render() {
   fill('open', open, 'Nothing is open. Every collector the broker watches published its newest file inside the threshold.');
   fill('resolved', closed, 'Nothing closed in the last 30 days.');
   fillCollectorCard(open);
+  renderChart();
 
   const stamp = document.getElementById('as-of');
   if (stamp) {
@@ -148,16 +233,27 @@ function render() {
 }
 
 async function load() {
+  const [ledger, chart] = await Promise.allSettled([
+    fetch(`${API}/v4/meta/alerts`, { headers: { accept: 'application/json' } }),
+    fetch(`${API}/v4/meta/alerts/series?hours=72`, { headers: { accept: 'application/json' } }),
+  ]);
   try {
-    const response = await fetch(`${API}/v4/meta/alerts`, { headers: { accept: 'application/json' } });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const body = await response.json();
+    if (ledger.status !== 'fulfilled' || !ledger.value.ok) throw new Error(`HTTP ${ledger.value && ledger.value.status}`);
+    const body = await ledger.value.json();
     alerts = Array.isArray(body.data) ? body.data : [];
     loadedAt = new Date();
   } catch (error) {
     fill('open', [], `the alert ledger did not answer (${error.message})`);
     fill('resolved', [], '');
-    return;
+  }
+  if (chart.status === 'fulfilled' && chart.value.ok) {
+    try {
+      const body = await chart.value.json();
+      series = Array.isArray(body.data) ? body.data : [];
+      seriesMeta = body.meta || seriesMeta;
+    } catch {
+      series = [];
+    }
   }
   render();
 }
