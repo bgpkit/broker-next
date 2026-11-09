@@ -2452,7 +2452,7 @@ function closeOpenDialog() {
 /// responses the page already holds, so the picture cannot claim more than the page does: no server
 /// renderer, no dependency, one 1200x640 canvas drawn from an SVG string.
 const CARD_W = 1200;
-const CARD_H = 720;
+const CARD_H = 1060;
 const CARD_COLOR = {
   paper: '#f7f5ee',
   ink: '#171610',
@@ -2571,15 +2571,11 @@ function cardStamp(value) {
 }
 
 function cardSvg(tile, updatesData, ribsData) {
-  // Both kinds, side by side. A collector's updates and its dumps fail independently, and a card
-  // that drew only the update strip said "stopped publishing" while its RIB row went unexamined.
+  // The collector is the subject: its name is the largest thing on the card, the verdict sits
+  // directly under it, and every surviving label is sized to stay readable when the image is shown
+  // at phone width, which is one third of the canvas.
   const updateDays = cardDays(updatesData);
   const ribDays = cardDays(ribsData);
-  const totals = {
-    updates: { parsed: updateDays.reduce((sum, day) => sum + day.files, 0), expected: updateDays.reduce((sum, day) => sum + day.expected, 0) },
-    ribs: { parsed: ribDays.reduce((sum, day) => sum + day.files, 0), expected: ribDays.reduce((sum, day) => sum + day.expected, 0) },
-  };
-  const statement = cardWrap(cardStatement(tile, totals));
   const accent = tile.health === 'ok' ? CARD_COLOR.ok
     : tile.health === 'late' || tile.health === 'partial' ? CARD_COLOR.stale
       : tile.health === 'alias' || tile.health === 'legacy' || tile.health === 'retired' ? CARD_COLOR.muted
@@ -2589,109 +2585,45 @@ function cardSvg(tile, updatesData, ribsData) {
     parts.push(`<text x="${x}" y="${y}" ${attrs}>${xmlEscape(value)}</text>`);
   const mono = (size, fill, extra = '') =>
     `font-family="ui-monospace, Menlo, monospace" font-size="${size}" ${extra} fill="${fill}"`;
+  const serif = (size, fill, extra = '') =>
+    `font-family="Georgia, 'Times New Roman', serif" font-size="${size}" ${extra} fill="${fill}"`;
 
   parts.push(`<rect width="${CARD_W}" height="${CARD_H}" fill="${CARD_COLOR.paper}"/>`);
-  // Masthead
-  text(64, 60, 'BGPKIT', `font-family="Georgia, 'Times New Roman', serif" font-size="30" fill="${CARD_COLOR.ink}"`);
-  text(64, 84, 'BROKER STATUS', mono(11, CARD_COLOR.muted, 'letter-spacing="3"'));
-  text(CARD_W - 64, 58, tile.name, mono(20, CARD_COLOR.ink, 'text-anchor="end"'));
-  text(
-    CARD_W - 64,
-    82,
-    `${projectLabel(tile.project)} · ${tile.country || 'no country'} · ${cardStamp(newestFeedStamp(tile))}`,
-    mono(11, CARD_COLOR.muted, 'letter-spacing="1.2" text-anchor="end"')
-  );
-  parts.push(`<line x1="64" y1="104" x2="${CARD_W - 64}" y2="104" stroke="${CARD_COLOR.rule}"/>`);
 
-  // Headline
-  parts.push(`<circle cx="71" cy="163" r="7" fill="${accent}"/>`);
-  text(92, 178, CARD_STATE[tile.health] || tile.health,
-    `font-family="Georgia, 'Times New Roman', serif" font-size="44" fill="${CARD_COLOR.ink}"`);
-  const sub = [
-    tile.health === 'stopped' && tile.newestUpdate ? `newest updates file ended ${dayStamp(tile.newestUpdate.ts_end || tile.newestUpdate.ts_start)}` : null,
-    tile.health === 'stopped' && tile.newestRib ? `newest RIB ended ${dayStamp(tile.newestRib.ts_end || tile.newestRib.ts_start)}` : null,
-    tile.updateAgeMin !== null ? `updates ${fmtAge(tile.updateAgeMin)} old` : null,
-    tile.ribAgeMin !== null ? `RIB ${fmtAge(tile.ribAgeMin)} old` : null,
-  ].filter(Boolean).join(' · ');
-  if (sub) text(92, 210, sub, mono(13, CARD_COLOR.muted));
+  text(72, 132, tile.name, serif(70, CARD_COLOR.ink, 'letter-spacing="-1.5"'));
+  text(72, 178, `${projectLabel(tile.project)} · ${tile.country || 'no country'}`, mono(30, CARD_COLOR.muted));
 
-  statement.forEach((line, index) => {
-    text(64, 244 + index * 26, line,
-      `font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif" font-size="19" fill="${CARD_COLOR.ink2}"`);
-  });
+  parts.push(`<circle cx="86" cy="276" r="11" fill="${accent}"/>`);
+  text(114, 292, CARD_STATE[tile.health] || tile.health, serif(54, CARD_COLOR.ink));
+  const lastUpdates = tile.newestUpdate ? dayStamp(tile.newestUpdate.ts_end || tile.newestUpdate.ts_start) : 'none';
+  const lastRib = tile.newestRib ? dayStamp(tile.newestRib.ts_end || tile.newestRib.ts_start) : 'none';
+  text(72, 356, `last file ${lastUpdates} · last RIB ${lastRib}`, mono(32, CARD_COLOR.ink2));
 
-  // Two strips, same scale rule: bar height is parsed over the files the archive published that day,
-  // and the track is the archive's own expectation, so an empty track means nothing was published.
-  const barW = 40;
-  const gap = 8;
-  // Both strips answer one question: is the source still publishing? The bar is the files the archive
-  // lists against what the collector's own cadence implies for that day, so a full bar means the
-  // source delivered and an empty one means it did not. Our parse progress is a separate number
-  // underneath, because a parse backlog must never read as an upstream outage.
-  const strip = (caption, days, perDay, topY) => {
-    text(64, topY, caption, mono(11, CARD_COLOR.muted, 'letter-spacing="2"'));
-    const barTop = topY + 14;
-    const barBase = topY + 84;
+  const cadence = cadenceOf(tile.project);
+  const perDay = (minutes) => (cadence && minutes ? Math.round(1440 / minutes) : 0);
+  const strip = (caption, days, expectedPerDay, topY) => {
+    text(72, topY, caption, mono(30, CARD_COLOR.muted, 'letter-spacing="1"'));
+    const barTop = topY + 28;
+    const barBase = barTop + 120;
+    const barW = 60;
+    const gap = 17;
     days.forEach((day, index) => {
-      const x = 64 + index * (barW + gap);
-      const ratio = perDay > 0 ? Math.min(1, day.expected / perDay) : 0;
-      const height = ratio > 0 ? Math.max(4, Math.round(ratio * (barBase - barTop))) : 0;
+      const bx = 72 + index * (barW + gap);
+      const ratio = expectedPerDay > 0 ? Math.min(1, day.expected / expectedPerDay) : 0;
+      const height = ratio > 0 ? Math.max(8, Math.round(ratio * (barBase - barTop))) : 0;
       const fill = ratio >= 0.999 ? CARD_COLOR.accent : ratio > 0 ? CARD_COLOR.stale : null;
-      const track = ratio > 0 ? CARD_COLOR.track : CARD_COLOR.empty;
-      parts.push(`<rect x="${x}" y="${barTop}" width="${barW}" height="${barBase - barTop}" fill="${track}"/>`);
-      if (fill) parts.push(`<rect x="${x}" y="${barBase - height}" width="${barW}" height="${height}" fill="${fill}"/>`);
-      text(x + barW / 2, barBase + 17, String(new Date(day.ms).getUTCDate()), mono(10, CARD_COLOR.faint, 'text-anchor="middle"'));
+      parts.push(`<rect x="${bx}" y="${barTop}" width="${barW}" height="${barBase - barTop}" fill="${ratio > 0 ? CARD_COLOR.track : CARD_COLOR.empty}"/>`);
+      if (fill) parts.push(`<rect x="${bx}" y="${barBase - height}" width="${barW}" height="${height}" fill="${fill}"/>`);
+      text(bx + barW / 2, barBase + 32, String(new Date(day.ms).getUTCDate()), mono(20, CARD_COLOR.faint, 'text-anchor="middle"'));
     });
     const listed = days.reduce((sum, day) => sum + day.expected, 0);
-    const wanted = perDay * days.length;
-    const parsed = days.reduce((sum, day) => sum + day.files, 0);
-    text(64, topY + 118, `${fmtInt(listed)} of ${fmtInt(wanted)} listed by the archive · ${fmtInt(parsed)} of those parsed`, mono(11, CARD_COLOR.muted));
-    return { parsed, listed, wanted };
+    const wanted = expectedPerDay * days.length;
+    text(72, barBase + 82, `${fmtInt(listed)} of ${fmtInt(wanted)} listed`, mono(34, CARD_COLOR.ink2));
   };
+  strip(`UPDATE FILES · ${fmtInt(perDay(cadence && cadence.updates))} A DAY`, updateDays, perDay(cadence && cadence.updates), 450);
+  strip(`RIB DUMPS · ${fmtInt(perDay(cadence && cadence.rib))} A DAY`, ribDays, perDay(cadence && cadence.rib), 745);
 
-  const range = `${dayLabel(updateDays[0].ms)} to ${dayLabel(updateDays[updateDays.length - 1].ms)}`;
-  const cadence = cadenceOf(tile.project);
-  const updatesPerDay = cadence ? Math.round(1440 / cadence.updates) : 0;
-  const ribsPerDay = cadence ? Math.round(1440 / cadence.rib) : 0;
-  const ribTotals = { listed: 0, wanted: 0 };
-  const updatesTotals = strip(`UPDATE FILES PER DAY · ${range} · ${fmtInt(updatesPerDay)}/day expected`, updateDays, updatesPerDay, 336);
-  const ribResult = strip(`RIB FILES PER DAY · ${range} · ${fmtInt(ribsPerDay)}/day expected`, ribDays, ribsPerDay, 496);
-  ribTotals.listed = ribResult.listed;
-  ribTotals.wanted = ribResult.wanted;
-
-  // The legend sits on the first strip's caption line and covers both strips: same three states.
-  // Each swatch is drawn the way the day is drawn: same track, same bar height. A solid red block
-  // next to a pale day with a red baseline reads as two different states.
-  [
-    ['all listed', CARD_COLOR.accent, CARD_COLOR.track, 9, 560],
-    ['some missing', CARD_COLOR.stale, CARD_COLOR.track, 6, 656],
-    ['none listed', null, CARD_COLOR.empty, 0, 772],
-  ].forEach(([label, fill, track, barHeight, x]) => {
-    parts.push(`<rect x="${x}" y="327" width="9" height="9" fill="${track}"/>`);
-    if (fill && barHeight) {
-      parts.push(`<rect x="${x}" y="${327 + 9 - barHeight}" width="9" height="${barHeight}" fill="${fill}"/>`);
-    }
-    text(x + 14, 336, label, mono(10, CARD_COLOR.muted));
-  });
-
-  // Right column: one block per thing somebody asks after "when did it stop", both kinds named.
-  const stats = [
-    ['LAST UPDATES FILE', tile.newestUpdate ? dayStamp(tile.newestUpdate.ts_end || tile.newestUpdate.ts_start) : 'none in the feed', tile.updateAgeMin !== null ? `${fmtAge(tile.updateAgeMin)} ago` : ''],
-    ['LAST RIB FILE', tile.newestRib ? dayStamp(tile.newestRib.ts_end || tile.newestRib.ts_start) : 'none in the feed', tile.ribAgeMin !== null ? `${fmtAge(tile.ribAgeMin)} ago` : ''],
-    ['UPDATES · 14 DAYS', `${fmtInt(updatesTotals.listed)} / ${fmtInt(updatesTotals.wanted)}`, 'in the archive / expected'],
-    ['RIB DUMPS · 14 DAYS', `${fmtInt(ribTotals.listed)} / ${fmtInt(ribTotals.wanted)}`, 'in the archive / expected'],
-  ];
-  stats.forEach(([label, value, note], index) => {
-    const y = 360 + index * 70;
-    text(800, y, label, mono(10, CARD_COLOR.muted, 'letter-spacing="1.6"'));
-    text(800, y + 23, value, mono(17, CARD_COLOR.ink));
-    if (note) text(800, y + 41, note, mono(11, CARD_COLOR.faint));
-  });
-
-  parts.push(`<line x1="64" y1="668" x2="${CARD_W - 64}" y2="668" stroke="${CARD_COLOR.rule}"/>`);
-  text(64, 694, 'broker.bgpkit.com', mono(11, CARD_COLOR.faint));
-  text(CARD_W - 64, 694, 'one collector\'s file delivery, not the global routing table',
-    mono(11, CARD_COLOR.faint, 'text-anchor="end"'));
+  text(72, CARD_H - 30, `broker.bgpkit.com · ${cardStamp(newestFeedStamp(tile))}`, mono(26, CARD_COLOR.faint));
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${CARD_W}" height="${CARD_H}" viewBox="0 0 ${CARD_W} ${CARD_H}">${parts.join('')}</svg>`;
 }
@@ -2724,6 +2656,57 @@ function svgToPngBlob(svg, scale = 2) {
     };
     image.src = url;
   });
+}
+
+/// The card is previewed first. The earlier flow saved the file immediately, which on a phone is a
+/// download the reader never sees and cannot hand to the app they wanted.
+const sharePreview = { url: null, name: '', blob: null };
+
+function openSharePreview(blob, filename) {
+  const host = $('#share-preview');
+  if (!host) return;
+  if (sharePreview.url) URL.revokeObjectURL(sharePreview.url);
+  sharePreview.blob = blob;
+  sharePreview.name = filename;
+  sharePreview.url = URL.createObjectURL(blob);
+  $('#share-preview-img').src = sharePreview.url;
+  host.hidden = false;
+  document.body.classList.add('drawer-open');
+  $('#share-preview-close').focus();
+}
+
+function closeSharePreview() {
+  const host = $('#share-preview');
+  if (!host || host.hidden) return;
+  host.hidden = true;
+  $('#share-preview-img').removeAttribute('src');
+  if (sharePreview.url) {
+    URL.revokeObjectURL(sharePreview.url);
+    sharePreview.url = null;
+  }
+  sharePreview.blob = null;
+  document.body.classList.remove('drawer-open');
+}
+
+function saveSharePreview() {
+  if (!sharePreview.url) return;
+  const anchor = el('a', { href: sharePreview.url, download: sharePreview.name });
+  anchor.style.display = 'none';
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+}
+
+async function copySharePreview() {
+  const button = $('#share-preview-copy');
+  if (!sharePreview.blob) return;
+  try {
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': sharePreview.blob })]);
+    button.textContent = 'copied';
+  } catch {
+    button.textContent = 'copy failed';
+  }
+  window.setTimeout(() => { button.textContent = 'copy'; }, 2200);
 }
 
 /// Save the card, and copy it to the clipboard when the browser allows an image write. The
@@ -2761,29 +2744,22 @@ async function shareCollectorImage(name, trigger) {
       api('/v4/mrt/counts', { ...query, data_type: 'ribs' }),
     ]);
     const blob = await svgToPngBlob(cardSvg(tile, updatesData, ribsData));
-    let copied = false;
-    if (window.isSecureContext && navigator.clipboard && window.ClipboardItem) {
-      try {
-        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-        copied = true;
-      } catch {
-        copied = false;
-      }
-    }
-    const url = URL.createObjectURL(blob);
-    const anchor = el('a', { href: url, download: `bgpkit-${name}-${new Date().toISOString().slice(0, 10)}.png` });
-    anchor.style.display = 'none';
-    document.body.append(anchor);
-    anchor.click();
-    anchor.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 30000);
-    settle(copied ? 'saved + copied' : 'saved');
+    openSharePreview(blob, `bgpkit-${name}-${new Date().toISOString().slice(0, 10)}.png`);
+    settle(label || 'share image');
   } catch (error) {
     settle('share failed');
   }
 }
 
 function onKeydown(event) {
+  const preview = $('#share-preview');
+  if (preview && !preview.hidden) {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeSharePreview();
+    }
+    return;
+  }
   const issueEl = $('#issue');
   const detailEl = $('#detail');
   const dialog = issueEl.dataset.open === 'true' ? issueEl : detailEl;
@@ -3240,6 +3216,12 @@ function wireEvents() {
   $('#detail-close').addEventListener('click', () => closeDetail());
   $('#detail-share').addEventListener('click', (event) => shareCollectorImage(state.detailName, event.currentTarget));
   $('#issue-close').addEventListener('click', () => closeIssue());
+  $('#share-preview-close').addEventListener('click', closeSharePreview);
+  $('#share-preview-save').addEventListener('click', saveSharePreview);
+  $('#share-preview-copy').addEventListener('click', copySharePreview);
+  $('#share-preview').addEventListener('click', (event) => {
+    if (event.target === event.currentTarget) closeSharePreview();
+  });
   $('#issue-filter').addEventListener('click', applyIssueFilter);
   $('#scrim').addEventListener('click', closeOpenDialog);
   document.addEventListener('keydown', onKeydown);

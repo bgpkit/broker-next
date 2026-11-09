@@ -10,7 +10,7 @@
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="icon" type="image/png" sizes="192x192" href="/favicon.png">
   <link rel="apple-touch-icon" href="/favicon.png">
-  <link rel="stylesheet" href="style.css?v=202611090340">
+  <link rel="stylesheet" href="style.css?v=202611090407">
 </head>
 <body>
   <a class="skip-link" href="#grid">Skip to collectors</a>
@@ -225,6 +225,21 @@
     </div>
   </aside>
 
-  <script type="module" src="app.js?v=202611090359"></script>
+  <div class="share-preview" id="share-preview" hidden>
+    <div class="share-preview-box" role="dialog" aria-modal="true" aria-labelledby="share-preview-title">
+      <div class="share-preview-head">
+        <h2 id="share-preview-title">share image</h2>
+        <button class="close" id="share-preview-close" type="button" aria-label="Close image preview">×</button>
+      </div>
+      <img id="share-preview-img" alt="Collector file delivery card">
+      <div class="share-preview-actions">
+        <button class="share" id="share-preview-save" type="button">save png</button>
+        <button class="share" id="share-preview-copy" type="button">copy</button>
+      </div>
+      <p class="share-preview-note">on a phone, press and hold the image to save or share it</p>
+    </div>
+  </div>
+
+  <script type="module" src="app.js?v=202611090409"></script>
 </body>
 </html>

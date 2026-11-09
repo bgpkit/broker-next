@@ -1155,6 +1155,51 @@ col.rf-open { width: 10%; }
 .share:disabled, .issue-share:disabled { opacity: 0.55; cursor: progress; }
 .issue-share { margin-left: auto; padding: 4px 7px; }
 
+/* ---------- share preview ---------- */
+
+/* The card is shown before it is saved: a phone that downloads a PNG on the first tap leaves the
+   reader with a file they never saw, and no way to send it to the app they meant to use. */
+.share-preview {
+  position: fixed; inset: 0; z-index: 40;
+  display: grid; place-items: center;
+  padding: 16px;
+  background: rgba(23, 22, 16, 0.58);
+}
+.share-preview[hidden] { display: none; }
+.share-preview-box {
+  display: flex; flex-direction: column;
+  max-width: min(1100px, 96vw); max-height: 94vh;
+  background: var(--panel);
+  border: 1px solid var(--rule-2);
+  border-radius: 3px;
+  box-shadow: 0 30px 90px -30px rgba(23, 22, 16, 0.55);
+}
+.share-preview-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--panel-sunk);
+}
+.share-preview-head h2 {
+  font: 9px var(--mono);
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+#share-preview-img {
+  display: block;
+  max-width: 100%;
+  max-height: 72vh;
+  object-fit: contain;
+  background: var(--paper);
+}
+.share-preview-actions {
+  display: flex; gap: 10px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--rule);
+}
+.share-preview-note { padding: 0 14px 10px; font: 8.5px var(--mono); color: var(--faint); }
+
 /* ---------- issue dialog ---------- */
 
 /* The attention state, opened: which collectors and what the file feed shows for each. Same frame
