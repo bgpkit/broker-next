@@ -2626,11 +2626,16 @@ function cardSvg(tile, updatesData, ribsData) {
     const barBase = topY + 84;
     days.forEach((day, index) => {
       const x = 64 + index * (barW + gap);
-      const ratio = day.expected > 0 ? Math.min(1, day.files / day.expected) : day.files > 0 ? 1 : 0;
-      const height = day.files > 0 ? Math.max(4, Math.round(ratio * (barBase - barTop))) : 3;
+      // Four states, not three: "the archive published nothing that day" and "the archive published
+      // files and we parsed none of them" are different findings, and drawing both as an empty bar
+      // let a backlog read like an upstream outage.
+      const published = day.expected > 0;
+      const ratio = published ? Math.min(1, day.files / day.expected) : 0;
+      const height = day.files > 0 ? Math.max(4, Math.round(ratio * (barBase - barTop))) : 4;
       const fill = day.files > 0 ? (ratio >= 0.999 ? CARD_COLOR.accent : CARD_COLOR.stale) : CARD_COLOR.fail;
-      parts.push(`<rect x="${x}" y="${barTop}" width="${barW}" height="${barBase - barTop}" fill="${day.files > 0 ? CARD_COLOR.track : CARD_COLOR.empty}"/>`);
-      parts.push(`<rect x="${x}" y="${barBase - height}" width="${barW}" height="${height}" fill="${fill}"/>`);
+      const track = !published ? CARD_COLOR.track : day.files > 0 ? CARD_COLOR.track : CARD_COLOR.empty;
+      parts.push(`<rect x="${x}" y="${barTop}" width="${barW}" height="${barBase - barTop}" fill="${track}"/>`);
+      if (published) parts.push(`<rect x="${x}" y="${barBase - height}" width="${barW}" height="${height}" fill="${fill}"/>`);
       text(x + barW / 2, barBase + 17, String(new Date(day.ms).getUTCDate()), mono(10, CARD_COLOR.faint, 'text-anchor="middle"'));
     });
     const parsed = days.reduce((sum, day) => sum + day.files, 0);
@@ -2644,16 +2649,17 @@ function cardSvg(tile, updatesData, ribsData) {
   strip(`RIB FILES PER DAY · ${range}`, ribDays, 496);
 
   // The legend sits on the first strip's caption line and covers both strips: same three states.
+  // Each swatch is drawn the way the day is drawn: same track, same bar height. A solid red block
+  // next to a pale day with a red baseline reads as two different states.
   [
-    [CARD_COLOR.accent, 'complete', 620],
-    [CARD_COLOR.stale, 'partial', 716],
-    [null, 'nothing published', 800],
-  ].forEach(([fill, label, x]) => {
-    if (fill) {
-      parts.push(`<rect x="${x}" y="327" width="9" height="9" fill="${fill}"/>`);
-    } else {
-      parts.push(`<rect x="${x}" y="327" width="9" height="9" fill="${CARD_COLOR.empty}"/>`);
-      parts.push(`<rect x="${x}" y="332" width="9" height="4" fill="${CARD_COLOR.fail}"/>`);
+    ['complete', CARD_COLOR.accent, CARD_COLOR.track, 9, 520],
+    ['partial', CARD_COLOR.stale, CARD_COLOR.track, 6, 610],
+    ['none parsed', CARD_COLOR.fail, CARD_COLOR.empty, 4, 692],
+    ['nothing published', null, CARD_COLOR.track, 0, 792],
+  ].forEach(([label, fill, track, barHeight, x]) => {
+    parts.push(`<rect x="${x}" y="327" width="9" height="9" fill="${track}"/>`);
+    if (fill && barHeight) {
+      parts.push(`<rect x="${x}" y="${327 + 9 - barHeight}" width="9" height="${barHeight}" fill="${fill}"/>`);
     }
     text(x + 14, 336, label, mono(10, CARD_COLOR.muted));
   });
