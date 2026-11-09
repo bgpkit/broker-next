@@ -26,8 +26,8 @@
 
     <main>
       <section aria-labelledby="chart-title" class="chart-sec">
-        <h2 id="chart-title">Collectors in alert, per hour</h2>
-        <p class="chart-lede">Each bar counts collectors, not alerts: a collector with both an updates and a RIB alert counts once, and one that escalated counts as stopped for that hour.</p>
+        <h2 id="chart-title">Collectors in alert over time</h2>
+        <p class="chart-lede">Each bar is the state at that instant, every five minutes: a collector in alert counts once even if it has both an updates and a RIB alert, and one that escalated counts as stopped. Short recoveries therefore show up as dips rather than being averaged away.</p>
         <div id="chart" class="chart"><p class="alert-empty">loading…</p></div>
         <p class="chart-legend">
           <span class="lg lg-crit">stopped</span>

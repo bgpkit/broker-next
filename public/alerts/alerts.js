@@ -125,23 +125,26 @@ function fillCollectorCard(alerts) {
 /// this page is "how long ago", and a number computed once at load is wrong a minute later.
 let alerts = [];
 let series = [];
-let seriesMeta = { hours: 72 };
+let seriesMeta = { hours: 24, bucket_minutes: 5 };
 let loadedAt = null;
 
 /// Hours from `count` back to the current one, in the format the series endpoint uses. The API only
 /// returns hours that had something open; the axis needs every hour, because a quiet hour is a fact
 /// and should be drawn as an empty slot rather than collapsed away.
-function hourAxis(count) {
+function bucketAxis(hours, stepMinutes) {
+    const step = stepMinutes * 60000;
     const end = new Date();
-    end.setUTCMinutes(0, 0, 0);
+    end.setUTCMilliseconds(0);
+    end.setUTCSeconds(0);
+    end.setUTCMinutes(end.getUTCMinutes() - (end.getUTCMinutes() % stepMinutes));
+    const start = new Date(end.getTime() - (hours * 3600000) + step);
     const pad = (value) => String(value).padStart(2, '0');
+    const stamp = (at) =>
+        `${at.getUTCFullYear()}-${pad(at.getUTCMonth() + 1)}-${pad(at.getUTCDate())}T${pad(at.getUTCHours())}:${pad(at.getUTCMinutes())}:00Z`;
     const out = [];
-    for (let i = count - 1; i >= 0; i -= 1) {
-        const at = new Date(end.getTime() - i * 3600000);
-        out.push({
-            key: `${at.getUTCFullYear()}-${pad(at.getUTCMonth() + 1)}-${pad(at.getUTCDate())}T${pad(at.getUTCHours())}:00:00Z`,
-            at,
-        });
+    for (let at = start.getTime(); at <= end.getTime(); at += step) {
+        const date = new Date(at);
+        out.push({ key: stamp(date), at: date });
     }
     return out;
 }
@@ -150,7 +153,8 @@ function renderChart() {
     const host = document.getElementById('chart');
     if (!host) return;
     const note = document.getElementById('chart-note');
-    const hours = Number(seriesMeta.hours) || 72;
+    const hours = Number(seriesMeta.hours) || 24;
+    const stepMinutes = Number(seriesMeta.bucket_minutes) || 5;
     const projects = [...new Set(series.map((row) => row.project))];
     if (!projects.length) {
         host.replaceChildren(el('p', { class: 'alert-empty', text: `No collector was in alert in the last ${hours} hours.` }));
@@ -160,10 +164,7 @@ function renderChart() {
     // Start where the data starts. The ledger only has a few hours of history so far, and drawing
     // sixty empty hours beside four full ones hides the shape this chart exists to show.
     const earliest = Math.min(...series.map((row) => Date.parse(row.hour)).filter(Number.isFinite));
-    const nowHour = new Date();
-    nowHour.setUTCMinutes(0, 0, 0);
-    const spanHours = Math.min(hours, Math.max(6, Math.round((nowHour.getTime() - earliest) / 3600000) + 1));
-    const axis = hourAxis(spanHours);
+    const axis = bucketAxis(hours, stepMinutes).filter((point) => point.at.getTime() >= earliest);
     const order = ['route-views', 'ripe-ris'];
     projects.sort((a, b) => (order.indexOf(a) + 1 || 9) - (order.indexOf(b) + 1 || 9) || a.localeCompare(b));
 
@@ -196,18 +197,21 @@ function renderChart() {
 
     // Tick density follows the span: a six-hour window labelled every twelve hours would show one
     // number, which is how this chart first shipped.
-    const step = spanHours <= 12 ? 2 : spanHours <= 24 ? 4 : spanHours <= 48 ? 6 : 12;
+    // Tick density follows the bucket: one label every twelve buckets, always the first and last.
+    const every = Math.max(1, Math.round(12));
     const ticks = axis.map(({ at }, index) => {
-        const hour = at.getUTCHours();
-        const show = index === 0 || index === axis.length - 1 || index % step === 0;
-        const label = hour === 0
-            ? `${String(at.getUTCMonth() + 1).padStart(2, '0')}-${String(at.getUTCDate()).padStart(2, '0')} 00:00`
-            : `${String(hour).padStart(2, '0')}:00`;
+        const show = index === 0 || index === axis.length - 1 || index % every === 0;
+        const pad = (value) => String(value).padStart(2, '0');
+        const label = at.getUTCMinutes() === 0 && at.getUTCHours() === 0
+            ? `${pad(at.getUTCMonth() + 1)}-${pad(at.getUTCDate())} 00:00`
+            : `${pad(at.getUTCHours())}:${pad(at.getUTCMinutes())}`;
         return el('span', { class: 'chart-hour', text: show ? label : '' });
     });
 
     host.replaceChildren(...rows, el('div', { class: 'chart-hours' }, ticks));
-    if (note) note.textContent = `peak ${peak} collector${peak === 1 ? '' : 's'} · ${spanHours} h · UTC`;
+    if (note) {
+        note.textContent = `peak ${peak} collector${peak === 1 ? '' : 's'} · ${axis.length} × ${stepMinutes} min · UTC`;
+    }
 }
 
 function render() {
@@ -235,7 +239,7 @@ function render() {
 async function load() {
   const [ledger, chart] = await Promise.allSettled([
     fetch(`${API}/v4/meta/alerts`, { headers: { accept: 'application/json' } }),
-    fetch(`${API}/v4/meta/alerts/series?hours=72`, { headers: { accept: 'application/json' } }),
+    fetch(`${API}/v4/meta/alerts/series?hours=24&bucket_minutes=5`, { headers: { accept: 'application/json' } }),
   ]);
   try {
     if (ledger.status !== 'fulfilled' || !ledger.value.ok) throw new Error(`HTTP ${ledger.value && ledger.value.status}`);
