@@ -790,45 +790,129 @@ function renderAttention(counts) {
   if (issue.health && $('#issue').dataset.open === 'true') renderIssue();
 }
 
-/// The alert ledger, in its own words. This is the only element on the page that quotes an
-/// external verdict, so it says nothing the ledger does not: collector, condition, and state. A
-/// missing or failed response hides the block instead of guessing. Not to be confused with the
-/// `#alerts` panel below it, which reports sources this page failed to load.
+/// Time as a reader feels it: the newest file we hold, said both as a timestamp and as how long
+/// ago that was. A collector that stopped is described by that distance, not by the state word.
+function ageWords(minutes) {
+  if (minutes === null || minutes === undefined || !Number.isFinite(minutes)) return '';
+  const total = Math.max(0, Math.round(minutes));
+  if (total < 2) return 'just now';
+  if (total < 90) return `${total}m ago`;
+  const hours = Math.floor(total / 60);
+  if (hours < 36) return total % 60 === 0 ? `${hours}h ago` : `${hours}h ${total % 60}m ago`;
+  const days = Math.floor(hours / 24);
+  const rest = hours % 24;
+  return rest === 0 ? `${days}d ago` : `${days}d ${rest}h ago`;
+}
+
+/// UTC, minutes, no seconds: the strip is read as "how long ago", and the exact instant is the
+/// tooltip.
+function stampWords(value) {
+  // The file feed sends naive timestamps ("2026-11-09T17:10:00"); Date.parse would read those as
+  // local time and print a wall clock seven hours off in summer. asUtc is the one place that
+  // decides, so every stamp on the page agrees.
+  const ms = asUtc(value).getTime();
+  if (!Number.isFinite(ms)) return '';
+  const date = new Date(ms);
+  const pad = (value) => String(value).padStart(2, '0');
+  return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}Z`;
+}
+
+const ALERT_STATE_WORD = { firing: 'stopped', recovering: 'resumed', pending: 'pending', held: 'held', late: 'late' };
+const ALERT_STATE_RANK = { stopped: 0, late: 1, pending: 2, resumed: 3 };
+
+/// Two sources, one list. The ledger says what crossed the gap threshold; the page itself can see a
+/// collector one or two slots behind, which is late rather than stopped and never reaches the
+/// ledger. Both answer the same question, so they share the strip and the same click target.
+function upstreamAlertRows() {
+  const source = state.sources.upstreamAlerts;
+  const ledger = source && !source.error && source.data && Array.isArray(source.data.data) ? source.data.data : [];
+  const rows = ledger.map((row) => {
+    const sinceMs = Date.parse(row.onset);
+    return {
+      name: row.collector,
+      stream: row.data_type === 'rib' ? 'RIB dumps' : 'updates',
+      state: ALERT_STATE_WORD[row.state] || row.state,
+      since: row.onset,
+      ageMin: Number.isFinite(sinceMs) ? (Date.now() - sinceMs) / 60000 : null,
+    };
+  });
+  const covered = new Set(ledger.map((row) => row.collector));
+  for (const tile of state.tiles) {
+    if (tile.health !== 'late' || covered.has(tile.name)) continue;
+    rows.push({
+      name: tile.name,
+      stream: 'updates',
+      state: 'late',
+      since: (tile.newestUpdate && tile.newestUpdate.ts_start) || null,
+      // Recomputed from the timestamp rather than read from the tile's stored age, so the strip can
+      // be redrawn on a timer without refetching anything.
+      ageMin: tile.newestUpdate ? (Date.now() - asUtc(tile.newestUpdate.ts_start).getTime()) / 60000 : tile.updateAgeMin,
+    });
+  }
+  return rows.sort(
+    (a, b) =>
+      (ALERT_STATE_RANK[a.state] ?? 9) - (ALERT_STATE_RANK[b.state] ?? 9) ||
+      (b.ageMin ?? 0) - (a.ageMin ?? 0) ||
+      a.name.localeCompare(b.name)
+  );
+}
+
+/// The count is split by what the words mean: a stopped collector is a published alert, a late one
+/// is a collector the page can see is behind but the ledger has not called yet.
+function summary(rows) {
+  const stopped = rows.filter((row) => row.state !== 'late').length;
+  const late = rows.length - stopped;
+  return [stopped ? `${fmtInt(stopped)} stopped` : null, late ? `${fmtInt(late)} late` : null].filter(Boolean).join(' · ');
+}
+
 function renderUpstreamAlerts() {
   const host = $('#upstream-alerts');
   if (!host) return;
-  const source = state.sources.upstreamAlerts;
-  const rows = source && !source.error && source.data && Array.isArray(source.data.data) ? source.data.data : [];
+  const rows = upstreamAlertRows();
   if (!rows.length) {
     host.hidden = true;
     host.replaceChildren();
     return;
   }
-  const feedLink = el('a', {
-    href: 'https://api.bgpkit.com/feeds/broker/alerts/all.atom',
-    target: '_blank',
-    rel: 'noopener noreferrer',
-    text: 'atom',
-  });
-  const detail = el('a', {
-    href: 'https://api.bgpkit.com/v4/meta/alerts',
-    target: '_blank',
-    rel: 'noopener noreferrer',
-    text: 'json',
-  });
-  // The page says what a reader can see; `firing` is the ledger's word for it.
-  const STATE_WORD = { firing: 'stopped', recovering: 'resumed', pending: 'pending', held: 'held' };
   host.replaceChildren(
-    el('p', { class: 'inc-head', text: `upstream alerts · ${fmtInt(rows.length)} open` }),
-    ...rows.map((row) =>
-      el('div', { class: 'inc-row' }, [
-        el('span', { class: 'inc-name', text: row.collector }),
-        el('span', { class: 'inc-state', text: `${row.condition === 'rib_stopped' ? 'RIB dumps' : 'updates'} ${STATE_WORD[row.state] || row.state} since ${row.onset}` }),
-      ]),
-    ),
-    el('span', { class: 'inc-feed' }, ['subscribe · ', feedLink, ' · ', detail]),
+    el('p', { class: 'alert-head' }, [
+      el('span', { text: `upstream alerts · ${summary(rows)}` }),
+      el('a', { class: 'alert-more', href: '/alerts/', text: 'all alerts →' }),
+    ]),
+    ...rows.map((row) => {
+      const body = [
+        el('span', { class: 'alert-name', text: row.name }),
+        el('span', { class: 'alert-what', text: `${row.stream} ${row.state}` }),
+        el('span', { class: 'alert-age', text: ageWords(row.ageMin) }),
+        el('span', { class: 'alert-stamp', text: stampWords(row.since) }),
+      ];
+      // Only a collector the page knows how to describe opens into the drawer; a name from the
+      // ledger that the catalog no longer lists stays a plain row instead of a dead button.
+      if (!state.byName.has(row.name)) return el('div', { class: 'alert-row is-flat' }, body);
+      return el(
+        'button',
+        {
+          class: 'alert-row',
+          type: 'button',
+          title: `${row.name}: last file ${stampWords(row.since) || 'unknown'}, open the collector`,
+          onclick: (event) => openDetail(row.name, event.currentTarget),
+        },
+        body
+      );
+    })
   );
   host.hidden = false;
+}
+
+/// The strip states how long ago, so it has to keep saying it. A minute is fine: nothing here is
+// resolved by seconds, and the whole redraw is a few dozen nodes.
+let alertStripTimer = null;
+function keepAlertStripCurrent() {
+  if (alertStripTimer) return;
+  alertStripTimer = setInterval(() => {
+    if (document.hidden) return;
+    renderUpstreamAlerts();
+  }, 60000);
 }
 
 /* ---------- grid ---------- */
@@ -3142,6 +3226,7 @@ async function boot() {
   renderHeader();
   renderStrip();
   renderUpstreamAlerts();
+  keepAlertStripCurrent();
   renderFleetChart();
   renderRibChart();
   renderProjects();

@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#f1efe8">
+  <title>BGPKIT Broker — upstream alerts</title>
+  <meta name="description" content="Collectors whose archive stopped publishing update files or RIB dumps, as detected by the BGPKIT broker, with Atom and JSON feeds to subscribe to.">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="icon" type="image/png" sizes="192x192" href="/favicon.png">
+  <link rel="apple-touch-icon" href="/favicon.png">
+  <link rel="stylesheet" href="/style.css">
+  <link rel="alternate" type="application/atom+xml" href="https://api.bgpkit.com/feeds/broker/alerts/all.atom" title="BGPKIT broker: upstream alerts">
+</head>
+<body>
+  <a class="skip-link" href="#open-title">Skip to alerts</a>
+
+  <div class="page alerts-page">
+    <header class="masthead">
+      <p class="eyebrow">BGPKIT broker</p>
+      <h1>Upstream alerts</h1>
+      <p class="lede">A collector appears here when the archive it publishes to stops listing its update files or RIB dumps. The evidence is the archive's own directory listing, not our parsing: an alert says the source went quiet, never that we fell behind.</p>
+      <p class="back"><a href="/">← collector status</a></p>
+    </header>
+
+    <main>
+      <section aria-labelledby="open-title">
+        <h2 id="open-title">Open now</h2>
+        <div id="open" class="alert-list">
+          <p class="alert-empty">loading…</p>
+        </div>
+      </section>
+
+      <section aria-labelledby="resolved-title">
+        <h2 id="resolved-title">Resolved in the last 30 days</h2>
+        <div id="resolved" class="alert-list">
+          <p class="alert-empty">loading…</p>
+        </div>
+      </section>
+
+      <section class="subscribe" aria-labelledby="subscribe-title">
+        <h2 id="subscribe-title">Subscribe</h2>
+        <p>One entry per alert, updated in place when its state changes, kept for 30 days after it resolves. Nothing is pushed: a reader polls the feed, and an entry never repeats under a new id.</p>
+
+        <div class="feed-cards">
+          <article class="feed-card">
+            <h3>Everything</h3>
+            <p>Every collector in both projects, both streams.</p>
+            <span class="links">
+              <a href="https://api.bgpkit.com/feeds/broker/alerts/all.atom">Atom</a>
+              <a href="https://api.bgpkit.com/feeds/broker/alerts/all.json">JSON</a>
+            </span>
+            <code>https://api.bgpkit.com/feeds/broker/alerts/all.atom</code>
+          </article>
+
+          <article class="feed-card">
+            <h3>One project</h3>
+            <p>RouteViews or RIPE RIS on its own.</p>
+            <span class="links">
+              <a href="https://api.bgpkit.com/feeds/broker/alerts/route-views.atom">route-views</a>
+              <a href="https://api.bgpkit.com/feeds/broker/alerts/ripe-ris.atom">ripe-ris</a>
+            </span>
+            <code>https://api.bgpkit.com/feeds/broker/alerts/{project}.atom</code>
+          </article>
+
+          <article class="feed-card">
+            <h3>One collector</h3>
+            <p id="collector-feed-note">The collector you care about, by its name on the status page.</p>
+            <span class="links" id="collector-feed-links">
+              <a href="https://api.bgpkit.com/feeds/broker/alerts/route-views.sg.atom">route-views.sg</a>
+            </span>
+            <code>https://api.bgpkit.com/feeds/broker/alerts/{collector}.atom</code>
+          </article>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/alerts/alerts.js" defer></script>
+</body>
+</html>
