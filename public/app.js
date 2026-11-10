@@ -50,6 +50,10 @@ const HEALTH = {
   partial: { label: 'partial', rank: 2 },
   late: { label: 'late', rank: 3 },
   legacy: { label: 'old name', rank: 4 },
+  // No verdict, because the counts response the verdict rests on never arrived. It ranks after
+  // the real faults and before `ok`: a reader has to see it, and it must not outrank a collector
+  // that is genuinely stopped.
+  unknown: { label: 'status unavailable', rank: 6.5 },
   alias: { label: 'duplicate', rank: 7.5 },
   ok: { label: 'ok', rank: 7 },
   pending: { label: 'not fetched', rank: 8 },
@@ -378,6 +382,9 @@ const PENDING_DAYS = 30;
 function healthOf(tile) {
   if (tile.deactivated) return 'retired';
   if (!tile.inCatalog) return tile.alias ? 'alias' : 'legacy';
+  // Without the 24h counts every tile would look like "no files in the window", which reads as a
+  // fleet-wide stop. A missing measurement is not a verdict: say so instead of inventing one.
+  if (tile.countsUnknown) return 'unknown';
   const ageDays = Number.isFinite(tile.activatedMs) ? (Date.now() - tile.activatedMs) / 86400000 : null;
   // "No files" is a statement about the whole life of the collector, so it needs the feed to hold
   // no file at all. A collector that published for years and then went quiet is stopped, and the
@@ -451,6 +458,9 @@ function buildModel() {
   const latestRows = Array.isArray(feed && feed.data) ? feed.data : [];
   const healthRows = Array.isArray(health && health.data) ? health.data : [];
   const windowRows = Array.isArray(windowed && windowed.data) ? windowed.data : [];
+  // The 24h rows are the only evidence behind every stopped/late/ok verdict. When that response
+  // failed there is nothing to judge, and an empty map must not be read as "no files anywhere".
+  const countsOk = Boolean(health) && !state.sources.health.error;
 
   // The same shape is summed twice: the fixed 24h rows decide health, the selected window's rows
   // supply every number the page prints.
@@ -535,6 +545,8 @@ function buildModel() {
         failed24: null,
         expected24: null,
         missing24: null,
+        // Set when the counts response that would justify a verdict never arrived.
+        countsUnknown: !countsOk,
         // Selected-window values: everything the page prints.
         filesWin: null,
         elementsWin: 0,
@@ -3453,10 +3465,17 @@ async function boot() {
   $('#grid').replaceChildren();
   $('#alerts').hidden = true;
 
+  // The 24h window is the health window: the same counts request would otherwise be fired twice,
+  // once as the health baseline and once as the selected window. Skip the duplicate here and let
+  // the alias below point both roles at one response.
+  const windowScoped = windowSpecs(state.window).filter(
+    (entry) => !(state.window === '24h' && entry.key === 'aggregates')
+  );
+
   const specs = [
     { key: 'catalog', path: '/v4/mrt/collectors', params: {} },
     healthSpec(),
-    ...windowSpecs(state.window),
+    ...windowScoped,
     { key: 'latest', path: '/v4/mrt/collectors/latest', params: {} },
     // The alert ledger is point-in-time, like the file feed, and optional: without it the page
     // renders exactly as before. Alerts are what the archive did; incidents, which are our own
