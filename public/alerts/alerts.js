@@ -165,54 +165,54 @@ function renderChart() {
         if (note) note.textContent = '';
         return;
     }
-    // Start where the data starts. The ledger only has a few hours of history so far, and drawing
-    // sixty empty hours beside four full ones hides the shape this chart exists to show.
+    // Start where the data starts. The ledger only has hours of history so far, and drawing a day of
+    // empty hours beside a few full ones hides the shape this chart exists to show.
     const stamps = series.map((row) => Date.parse(row.hour)).filter(Number.isFinite);
-    const earliest = Math.min(...stamps);
-    const latest = Math.max(...stamps);
-    const axis = bucketAxis(earliest, latest, stepMinutes);
+    const axis = bucketAxis(Math.min(...stamps), Math.max(...stamps), stepMinutes);
     const order = ['route-views', 'ripe-ris'];
     projects.sort((a, b) => (order.indexOf(a) + 1 || 9) - (order.indexOf(b) + 1 || 9) || a.localeCompare(b));
 
     const lookup = new Map(series.map((row) => [`${row.project}|${row.hour}`, row]));
-    let peak = 0;
-    for (const row of series) peak = Math.max(peak, row.critical + row.warning);
-    const top = Math.max(1, peak);
+    // One scale per tier, not one for both. Two stopped collectors against twenty-two late ones is a
+    // three-pixel band under a shared scale, which reads as a baseline rule rather than a value; on
+    // its own lane the same two fill two thirds of the height. Position now separates the tiers, so
+    // colour is no longer doing work it cannot do at two pixels wide.
+    const topCrit = Math.max(1, ...series.map((row) => row.critical));
+    const topWarn = Math.max(1, ...series.map((row) => row.warning));
 
-    const rows = projects.map((project) => {
-        const bars = axis.map(({ key, at }) => {
-            const hit = lookup.get(`${project}|${key}`) || { critical: 0, warning: 0 };
-            const label = `${stampWords(key)} · ${project} · ${hit.critical} critical, ${hit.warning} warning`;
-            // Stopped sits at the bottom: it is the slow-moving part of the picture, so the baseline
-            // stays still while the late segment moves above it.
-            return el('div', { class: 'chart-bar', title: label }, [
-                hit.warning ? el('span', { class: 'warn', style: `height:${(hit.warning / top) * 100}%` }) : null,
-                hit.critical ? el('span', { class: 'crit', style: `height:${(hit.critical / top) * 100}%` }) : null,
-            ]);
-        });
-        const name = project === 'route-views' ? 'route-views' : project === 'ripe-ris' ? 'ripe-ris' : project;
-        // The bars share one scale so the two projects are comparable, which makes a small value a
-        // speck; the number at the end of the row is the current hour, so the reader gets both.
+    const lane = (project, tier, top, className) =>
+        el('div', { class: 'chart-row is-lane' }, [
+            el('span', { class: 'chart-lane', text: tier }),
+            el('div', { class: 'chart-bars is-lane' }, axis.map(({ key }) => {
+                const hit = lookup.get(`${project}|${key}`) || { critical: 0, warning: 0 };
+                const value = tier === 'critical' ? hit.critical : hit.warning;
+                const label = `${stampWords(key)} · ${project} · ${hit.critical} critical, ${hit.warning} warning`;
+                return el('div', { class: 'chart-bar', title: label }, [
+                    value > 0
+                        ? el('span', { class: className, style: `height:${((value / top) * 100).toFixed(2)}%` })
+                        : null,
+                ]);
+            })),
+        ]);
+
+    const blocks = projects.flatMap((project) => {
         const lastKey = axis[axis.length - 1].key;
         const last = lookup.get(`${project}|${lastKey}`) || { critical: 0, warning: 0 };
-        // Both counts, always: a row that says only "3 critical" hides the nineteen collectors that
-        // are merely behind behind it.
         const current = last.critical + last.warning === 0 ? 'clear' : `${last.critical} critical · ${last.warning} warning`;
-        // Counts live under the project name: the bars keep the full width, and the row needs no
-        // second column whose width would depend on the numbers and knock the axis out of line.
-        return el('div', { class: 'chart-row' }, [
-            el('span', { class: 'chart-name' }, [
-                el('span', { class: 'chart-proj', text: name }),
-                el('span', { class: 'chart-count', text: current }),
+        return [
+            el('div', { class: 'chart-row is-head' }, [
+                el('span', { class: 'chart-name' }, [
+                    el('span', { class: 'chart-proj', text: project }),
+                    el('span', { class: 'chart-count', text: current }),
+                ]),
             ]),
-            el('div', { class: 'chart-bars' }, bars),
-        ]);
+            lane(project, 'warning', topWarn, 'warn'),
+            lane(project, 'critical', topCrit, 'crit'),
+        ];
     });
 
-    // Tick density follows the span: a six-hour window labelled every twelve hours would show one
-    // number, which is how this chart first shipped.
     // Tick density follows the bucket: one label every twelve buckets, always the first and last.
-    const every = Math.max(1, Math.round(12));
+    const every = 12;
     const ticks = axis.map(({ at }, index) => {
         const show = index === 0 || index === axis.length - 1 || index % every === 0;
         const pad = (value) => String(value).padStart(2, '0');
@@ -224,17 +224,15 @@ function renderChart() {
         ]);
     });
 
-    // The axis rides the same grid as the rows, so the ticks line up with the bars whatever width
-    // the row-end label takes.
     host.replaceChildren(
-        ...rows,
+        ...blocks,
         el('div', { class: 'chart-row chart-axis' }, [
             el('span', { class: 'chart-name' }),
             el('div', { class: 'chart-hours' }, ticks),
         ])
     );
     if (note) {
-        note.textContent = `peak ${peak} collector${peak === 1 ? '' : 's'} · ${axis.length} × ${stepMinutes} min · UTC`;
+        note.textContent = `peak ${topCrit} critical · ${topWarn} warning · ${axis.length} × ${stepMinutes} min · UTC`;
     }
 }
 

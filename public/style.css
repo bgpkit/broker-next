@@ -1434,6 +1434,12 @@ col.rf-open { width: 10%; }
 .chart { display: flex; flex-direction: column; gap: 8px; }
 .chart-row { display: grid; grid-template-columns: 18ch 1fr; gap: 8px; align-items: end; }
 .chart-name { display: flex; flex-direction: column; gap: 1px; padding-bottom: 10px; }
+.chart-lane { font: 9px/1.2 var(--mono); color: var(--faint); padding-bottom: 2px; }
+.chart-row.is-head { align-items: start; }
+.chart-row.is-head .chart-name { padding-bottom: 2px; }
+.chart-row.is-lane .chart-lane { text-align: right; padding-right: 6px; }
+.chart-bars.is-lane { height: 26px; border-bottom: 0; }
+.chart-row.is-lane + .chart-row.is-lane .chart-bars.is-lane { border-top: 1px solid var(--rule); }
 .chart-proj { font: 10px/1.4 var(--mono); color: var(--ink-2); }
 .chart-count { font: 9px/1.4 var(--mono); color: var(--faint); white-space: nowrap; }
 .chart-bars { display: flex; align-items: flex-end; gap: 1px; height: 72px; border-bottom: 1px solid var(--rule-2); }
@@ -1447,9 +1453,18 @@ col.rf-open { width: 10%; }
   justify-content: flex-end;
   background: linear-gradient(to top, var(--panel-sunk), var(--panel-sunk));
 }
-.chart-bar .warn { background: var(--stale); opacity: 0.55; display: block; }
-.chart-bar .crit { background: var(--fail); display: block; }
-.chart-bar:hover .warn { opacity: 0.85; }
+/* The two tiers have to be told apart at two pixels wide, where a hue difference alone disappears.
+   Critical is the darkest thing on the page and warning is a bright amber, so the split is carried by
+   lightness as well as hue, and a hairline of panel colour keeps the boundary visible when both are
+   stacked. */
+.chart-bar .crit {
+  background: #6f1a10;
+  display: block;
+  box-shadow: 0 -1px 0 var(--panel);
+}
+.chart-bar .warn { background: #e9a227; display: block; }
+.chart-bar:hover .crit { background: #8c2314; }
+.chart-bar:hover .warn { background: #f2b24a; }
 .chart-hours { display: flex; gap: 1px; min-width: 0; overflow: visible; }
 .chart-axis { align-items: start; }
 .chart-hour {
@@ -1465,8 +1480,8 @@ col.rf-open { width: 10%; }
 .chart-hour.is-last > span { left: auto; right: 0; }
 .chart-legend { display: flex; gap: 12px; align-items: baseline; margin: 8px 0 0; font: 9px/1.4 var(--mono); color: var(--muted); }
 .chart-legend .lg::before { content: ''; display: inline-block; width: 8px; height: 8px; margin-right: 4px; vertical-align: baseline; }
-.chart-legend .lg-crit::before { background: var(--fail); }
-.chart-legend .lg-warn::before { background: var(--stale); opacity: 0.55; }
+.chart-legend .lg-crit::before { background: #6f1a10; }
+.chart-legend .lg-warn::before { background: #e9a227; }
 .chart-note { margin-left: auto; color: var(--faint); }
 
 .subscribe { margin-top: 30px; }
