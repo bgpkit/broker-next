@@ -195,11 +195,17 @@ function renderChart() {
         // speck; the number at the end of the row is the current hour, so the reader gets both.
         const lastKey = axis[axis.length - 1].key;
         const last = lookup.get(`${project}|${lastKey}`) || { critical: 0, warning: 0 };
-        const current = last.critical ? `${last.critical} critical` : last.warning ? `${last.warning} warning` : 'clear';
+        // Both counts, always: a row that says only "3 critical" hides the nineteen collectors that
+        // are merely behind behind it.
+        const current = last.critical + last.warning === 0 ? 'clear' : `${last.critical} critical · ${last.warning} warning`;
+        // Counts live under the project name: the bars keep the full width, and the row needs no
+        // second column whose width would depend on the numbers and knock the axis out of line.
         return el('div', { class: 'chart-row' }, [
-            el('span', { class: 'chart-name', text: name }),
+            el('span', { class: 'chart-name' }, [
+                el('span', { class: 'chart-proj', text: name }),
+                el('span', { class: 'chart-count', text: current }),
+            ]),
             el('div', { class: 'chart-bars' }, bars),
-            el('span', { class: 'chart-max', text: current }),
         ]);
     });
 
@@ -213,10 +219,20 @@ function renderChart() {
         const label = at.getUTCMinutes() === 0 && at.getUTCHours() === 0
             ? `${pad(at.getUTCMonth() + 1)}-${pad(at.getUTCDate())} 00:00`
             : `${pad(at.getUTCHours())}:${pad(at.getUTCMinutes())}`;
-        return el('span', { class: 'chart-hour', text: show ? label : '' });
+        return el('span', { class: index === axis.length - 1 ? 'chart-hour is-last' : 'chart-hour' }, [
+            show ? el('span', { text: label }) : null,
+        ]);
     });
 
-    host.replaceChildren(...rows, el('div', { class: 'chart-hours' }, ticks));
+    // The axis rides the same grid as the rows, so the ticks line up with the bars whatever width
+    // the row-end label takes.
+    host.replaceChildren(
+        ...rows,
+        el('div', { class: 'chart-row chart-axis' }, [
+            el('span', { class: 'chart-name' }),
+            el('div', { class: 'chart-hours' }, ticks),
+        ])
+    );
     if (note) {
         note.textContent = `peak ${peak} collector${peak === 1 ? '' : 's'} · ${axis.length} × ${stepMinutes} min · UTC`;
     }
