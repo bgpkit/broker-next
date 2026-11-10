@@ -167,6 +167,19 @@ function bucketAxis(firstMs, lastMs, stepMinutes) {
     return out;
 }
 
+/// Open alerts by project and severity, straight from the ledger the list is built from.
+function liveCounts(project) {
+    let critical = 0;
+    let warning = 0;
+    for (const row of alerts) {
+        if (row.project !== project) continue;
+        if (row.state === 'resolved' || row.state === 'superseded') continue;
+        if (severity(row) === 'critical') critical += 1;
+        else warning += 1;
+    }
+    return { critical, warning };
+}
+
 function renderChart() {
     const host = document.getElementById('chart');
     if (!host) return;
@@ -207,11 +220,13 @@ function renderChart() {
         const name = project === 'route-views' ? 'route-views' : project === 'ripe-ris' ? 'ripe-ris' : project;
         // The bars share one scale so the two projects are comparable, which makes a small value a
         // speck; the number at the end of the row is the current hour, so the reader gets both.
-        const lastKey = axis[axis.length - 1].key;
-        const last = lookup.get(`${project}|${lastKey}`) || { critical: 0, warning: 0 };
+        // Live counts, not the last bucket: the bucket is at least a scrape old and its window can
+        // miss an alert that opened since, which is exactly how a summary ends up saying zero while
+        // two warnings sit in the list below it.
+        const live = liveCounts(project);
         // Both counts, always: a row that says only "3 critical" hides the nineteen collectors that
         // are merely behind behind it.
-        const current = last.critical + last.warning === 0 ? 'clear' : `${last.critical} critical · ${last.warning} warning`;
+        const current = live.critical + live.warning === 0 ? 'clear' : `${live.critical} critical · ${live.warning} warning`;
         // Counts live under the project name: the bars keep the full width, and the row needs no
         // second column whose width would depend on the numbers and knock the axis out of line.
         return el('div', { class: 'chart-row' }, [
@@ -249,7 +264,7 @@ function renderChart() {
     // the rendered text is, and on a phone every twelfth bucket is twenty pixels apart.
     thinTicks(axisNode);
     if (note) {
-        note.textContent = `peak ${peak} collector${peak === 1 ? '' : 's'} · ${axis.length} × ${stepMinutes} min · UTC`;
+        note.textContent = `peak ${peak} alert${peak === 1 ? '' : 's'} · ${axis.length} × ${stepMinutes} min · UTC`;
     }
 }
 
