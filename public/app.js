@@ -2170,6 +2170,144 @@ function renderDelivery(target, data, name, at, until) {
   );
 }
 
+/// Peer mix: each session's share of the collector's hourly update elements. Share, not absolute
+/// volume, because the collector total moves too: a peer that doubles while the total doubles
+/// looks flat in absolute terms and is exactly the thing a reader opens this drawer to find.
+function renderPeerMix(target, data, name) {
+  const buckets = Array.isArray(data.buckets) ? data.buckets : [];
+  const peers = Array.isArray(data.peers) ? data.peers : [];
+  const win = data.window || {};
+  target.src.textContent = `peer sessions · share of hourly session elements · ${fmtInt(win.count || buckets.length)} hours · ${dayStamp(win.start)} → ${dayStamp(win.end)}`;
+
+  if (!peers.length || !buckets.length) {
+    target.body.replaceChildren(
+      el('div', { class: 'empty-state', text: 'No peer-session counters for this collector in the last 7 days.' })
+    );
+    return;
+  }
+
+  const gaps = Array.isArray(data.gaps) ? data.gaps : [];
+  const gapHours = gaps.reduce((total, gap) => total + num(gap.buckets), 0);
+  // Drawn at the width it will occupy: the drawer is the same width as the page column, so a fixed
+  // viewBox would either stretch the labels or leave the chart narrower than its panel.
+  const width = Math.max(260, Math.round(target.body.clientWidth || 340));
+
+  target.body.replaceChildren(
+    buildPeerMixChart(buckets, peers, gaps, width),
+    el('div', { class: 'peer-legend' }, peers.map((peer, index) =>
+      el('span', { class: 'peer-key' }, [
+        el('i', { class: 'peer-dot', style: `background:${PEER_COLORS[index % PEER_COLORS.length]}` }),
+        el('span', { text: `AS${peer.peer_asn}` }),
+        el('b', { text: `${fmtPct(peer.peak_share)}` }),
+      ])
+    )),
+    el('p', { class: 'tbl-note', text: gapHours
+      ? `Shaded hours have no parsed file, ${fmtInt(gapHours)} of ${fmtInt(win.count || buckets.length)}. Peak share per peer on the right.`
+      : 'Every hour in the window has a parsed file. Peak share per peer on the right.' })
+  );
+}
+
+const PEER_COLORS = ['#0e5a46', '#2f7d63', '#6fa38c', '#3f6fae', '#7a4b8f', '#9a5a06', '#8a7a4e', '#5f5b4e'];
+
+function fmtPct(value) {
+  const n = num(value);
+  return n >= 10 ? `${Math.round(n)}%` : `${n.toFixed(1)}%`;
+}
+
+function buildPeerMixChart(buckets, peers, gaps, width) {
+  const height = 150;
+  const padT = 10;
+  const padB = 20;
+  const padL = 34;
+  const padR = 8;
+  const innerW = width - padL - padR;
+  const innerH = height - padT - padB;
+  const base = padT + innerH;
+  const count = buckets.length;
+  const step = count > 1 ? innerW / (count - 1) : innerW;
+  const xAt = (index) => padL + (count === 1 ? innerW / 2 : index * step);
+  const yAt = (value) => padT + innerH - (Math.min(100, Math.max(0, value)) / 100) * innerH;
+
+  const svg = svgEl('svg', {
+    class: 'peer-mix',
+    viewBox: `0 0 ${width} ${height}`,
+    width,
+    height,
+    role: 'img',
+    'aria-label': `Peer session share of ${buckets.length} hourly buckets; ${gaps.length} gap ranges`,
+  });
+
+  // The gap band first, so no line is ever hidden behind it: an hour with no file is a fact about
+  // the data, not a value, and it must be visible under the lines that stop at its edges.
+  for (const gap of gaps) {
+    const startIndex = buckets.findIndex((bucket) => bucket.t === gap.start);
+    const endIndex = buckets.findIndex((bucket) => bucket.t === gap.end);
+    if (startIndex < 0 || endIndex < 0) continue;
+    const left = Math.max(padL, xAt(startIndex) - step / 2);
+    const right = Math.min(width - padR, xAt(endIndex) + step / 2);
+    svg.append(svgEl('rect', {
+      class: 'peer-gap',
+      x: left.toFixed(1),
+      y: padT,
+      width: Math.max(1, right - left).toFixed(1),
+      height: innerH,
+    }));
+  }
+
+  for (const fraction of [0.25, 0.5, 0.75, 1]) {
+    const y = (padT + innerH * (1 - fraction)).toFixed(1);
+    svg.append(svgEl('line', { class: 'spark-grid', x1: padL, x2: width - padR, y1: y, y2: y }));
+    svg.append(svgEl('text', {
+      class: 'peer-axis',
+      x: padL - 6,
+      y: (Number(y) + 3).toFixed(1),
+      'text-anchor': 'end',
+      text: `${Math.round(fraction * 100)}%`,
+    }));
+  }
+  svg.append(svgEl('line', { class: 'spark-base', x1: padL, x2: width - padR, y1: base, y2: base }));
+  svg.append(svgEl('text', { class: 'peer-axis', x: padL - 6, y: base + 3, 'text-anchor': 'end', text: '0' }));
+  svg.append(svgEl('text', { class: 'peer-axis', x: padL, y: height - 4, text: dayStamp(buckets[0].t) }));
+  svg.append(svgEl('text', {
+    class: 'peer-axis',
+    x: width - padR,
+    y: height - 4,
+    'text-anchor': 'end',
+    text: dayStamp(buckets[count - 1].t),
+  }));
+
+  peers.forEach((peer, index) => {
+    const colour = PEER_COLORS[index % PEER_COLORS.length];
+    let segment = [];
+    const flush = () => {
+      if (!segment.length) return;
+      if (segment.length === 1) {
+        const [x, y] = segment[0].split(' ');
+        svg.append(svgEl('circle', { cx: x, cy: y, r: '1.8', fill: colour }));
+      } else {
+        svg.append(svgEl('path', {
+          d: `M${segment.join(' L')}`,
+          fill: 'none',
+          stroke: colour,
+          'stroke-width': index === 0 ? '1.9' : '1.3',
+          'stroke-linejoin': 'round',
+        }));
+      }
+      segment = [];
+    };
+    (peer.share || []).forEach((value, i) => {
+      if (value === null || value === undefined) {
+        flush();
+        return;
+      }
+      segment.push(`${xAt(i).toFixed(1)} ${yAt(value).toFixed(1)}`);
+    });
+    flush();
+  });
+
+  return svg;
+}
+
 function renderNewest(target, data, name, at) {
   const rows = (Array.isArray(data.data) ? data.data : []).filter((row) => row.collector === name);
   const feedAt = (data.meta && data.meta.generated_at) || at;
@@ -2396,6 +2534,10 @@ function openDetail(name, trigger) {
   // What the ledger says about this collector: the same rows the alerts page and the feed read, so
   // a reader who opened a tile can see why it looks the way it does without leaving the page.
   const alerts = section('Alerts · last 30 days', 'alert ledger · queued');
+  // One window for every collector, seven days, so two drawers compared side by side share an
+  // x-axis. Hours with no parsed file are shaded instead of trimming the chart: a series that
+  // ends early reads as "quieter" when it means "we have nothing for that hour".
+  const mix = section('Peer mix · last 7 days', 'peer sessions · queued');
   // Tables on the left, charts on the right: Identity and the newest-file table are read as
   // rows, the delivery sparkline and the two facet panels are read as shapes.
   body.replaceChildren(
@@ -2403,6 +2545,7 @@ function openDetail(name, trigger) {
       el('div', { class: 'detail-col' }, [identitySection(tile), alerts.node, newest.node]),
       el('div', { class: 'detail-col' }, [delivery.node, facets.node]),
     ]),
+    mix.node,
     recent.node,
     peers.node
   );
@@ -2418,6 +2561,14 @@ function openDetail(name, trigger) {
     })
     .catch((error) => {
       if (seq === state.detailSeq) renderFailure(peers, 'peer list', error);
+    });
+
+  api('/v4/mrt/collectors/peer-share-series', { collector: name, hours: 168, top: 8 })
+    .then((data) => {
+      if (seq === state.detailSeq) renderPeerMix(mix, data, name);
+    })
+    .catch((error) => {
+      if (seq === state.detailSeq) renderFailure(mix, 'peer mix', error);
     });
 
   api('/v4/meta/alerts', { collector: name })

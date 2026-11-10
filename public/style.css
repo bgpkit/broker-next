@@ -771,6 +771,16 @@ select:hover, input:hover { border-color: var(--muted); }
   color: var(--muted);
   margin: 4px 0 2px;
 }
+/* Peer mix: a share chart where the shaded band is "no file", not "zero". Light enough that a
+   line crossing it stays readable, distinct enough that it is not mistaken for the paper. */
+.peer-mix { display: block; max-width: 100%; }
+.peer-axis { font-family: var(--mono); font-size: 9px; fill: var(--faint); }
+.peer-gap { fill: #a02517; fill-opacity: 0.10; }
+.peer-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; }
+.peer-key { display: inline-flex; align-items: center; gap: 5px; font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+.peer-key b { font-weight: 500; color: var(--ink-2); }
+.peer-dot { width: 9px; height: 3px; border-radius: 1px; display: inline-block; }
+
 .spark-axis {
   display: flex; justify-content: space-between;
   font: 8px var(--mono);
