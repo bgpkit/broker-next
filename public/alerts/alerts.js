@@ -90,10 +90,14 @@ function streamLine(row) {
   const stream = row.data_type === 'rib' ? 'RIB dumps' : 'updates';
   return el('div', { class: `stream-row is-${level}${closed ? ' is-closed' : ''}` }, [
     el('span', { class: 'stream-name', text: stream }),
-    // The first column already names the stream, so the second only carries what happened to it.
-    el('span', { class: closed ? (row.state === 'resolved' ? 'stream-state is-resolved' : 'stream-state is-superseded') : 'stream-state', text: what(row).replace(/^(updates|RIB dumps) /, '') }),
+    // The first column names the stream, the second carries what happened to it plus its JSON
+    // record, and the last line carries the timing. One row fewer than a separate link line.
+    el('span', { class: closed ? (row.state === 'resolved' ? 'stream-state is-resolved' : 'stream-state is-superseded') : 'stream-state' }, [
+      document.createTextNode(what(row).replace(/^(updates|RIB dumps) /, '')),
+      document.createTextNode(' · '),
+      el('a', { class: 'stream-json', href: permalink(row), text: 'json' }),
+    ]),
     el('span', { class: 'stream-time', text: `last file ${stampWords(row.onset)} · ${ageWords(age)}` }),
-    el('a', { class: 'stream-record', href: permalink(row), text: 'record' }),
   ]);
 }
 
