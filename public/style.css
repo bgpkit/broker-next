@@ -1416,6 +1416,26 @@ col.rf-open { width: 10%; }
    edge, warning is an outlined badge on a plain row. At phone width the outline and the weight do
    the separation that colour alone was not doing. */
 .alert-item.is-critical { border-left: 2px solid #6f1a10; padding-left: 8px; }
+.collector-card.is-closed { border-left-color: var(--rule-2); }
+.stream-lines { margin: 3px 0 0; }
+.stream-row {
+  display: grid;
+  grid-template-columns: 9ch 1fr;
+  gap: 2px 8px;
+  padding: 2px 0;
+  font: 10px/1.5 var(--mono);
+  color: var(--ink-2);
+}
+.stream-row + .stream-row { border-top: 1px dotted var(--rule); }
+.stream-name { color: var(--muted); }
+.stream-state { color: var(--ink); }
+.stream-state.is-resolved { color: var(--ok); }
+.stream-state.is-superseded { color: var(--stale); }
+.stream-time { grid-column: 2; color: var(--faint); }
+.stream-record { grid-column: 2; color: var(--muted); text-decoration: none; }
+.stream-record:hover { text-decoration: underline; }
+.stream-row.is-closed .stream-state,
+.stream-row.is-closed .stream-name { color: var(--muted); }
 .alert-item.is-warning { border-left: 2px solid transparent; padding-left: 8px; }
 .alert-item.is-closed.is-critical { border-left-color: var(--rule-2); }
 .alert-item .line .sev {
