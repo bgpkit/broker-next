@@ -1063,17 +1063,6 @@ col.rf-open { width: 10%; }
   color: var(--muted);
   margin-bottom: 7px;
 }
-.rpki-bar {
-  display: flex;
-  height: 12px;
-  border: 1px solid var(--rule-2);
-  background: var(--panel);
-  overflow: hidden;
-}
-.rpki-bar .seg { display: block; height: 100%; }
-.seg-valid { background: var(--ok); }
-.seg-invalid { background: var(--fail); }
-.seg-unknown { background: var(--silent); }
 .facet-legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 7px; font: 10px var(--mono); color: var(--ink-2); }
 .facet-key { display: inline-flex; align-items: center; gap: 5px; }
 .facet-key i { width: 8px; height: 8px; border-radius: 1px; display: inline-block; }

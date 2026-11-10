@@ -1904,48 +1904,8 @@ function identitySection(tile) {
   return sectionRef.node;
 }
 
-/// The RPKI verdict split and the attribute mix are folded into the collector view from the same
-/// file index the rest of the page reads, so no extra service is involved.
-function facetKey(label, value, sum, color) {
-  const share = sum > 0 ? (100 * value) / sum : 0;
-  return el('span', { class: 'facet-key' }, [
-    el('i', { style: `background:${color}` }),
-    el('span', { text: `${label} ${fmtCompact(value)} · ${share.toFixed(share < 1 ? 2 : 1)}%` }),
-  ]);
-}
-
-function renderVerdictSplit(data, name) {
-  const rows = (Array.isArray(data.data) ? data.data : []).filter((row) => row.id === name);
-  const total = (key) => rows.reduce((sum, row) => sum + num(row[key]), 0);
-  const valid = total('rpki_valid_elements');
-  const invalid = total('rpki_invalid_elements');
-  const unknown = total('rpki_unknown_elements');
-  const all = valid + invalid + unknown;
-
-  const wrap = el('div', { class: 'facet' });
-  if (!all) {
-    wrap.append(el('p', { class: 'muted', text: 'no RPKI verdicts in this window' }));
-    return wrap;
-  }
-
-  const pct = (value) => (100 * value) / all;
-  wrap.append(
-    el('p', { class: 'facet-title', text: 'RPKI validation results' }),
-    el('div', { class: 'rpki-bar' }, [
-      el('span', { class: 'seg seg-valid', style: `width:${pct(valid).toFixed(2)}%`, title: `valid ${fmtInt(valid)}` }),
-      el('span', { class: 'seg seg-invalid', style: `width:${pct(invalid).toFixed(2)}%`, title: `invalid ${fmtInt(invalid)}` }),
-      el('span', { class: 'seg seg-unknown', style: `width:${pct(unknown).toFixed(2)}%`, title: `unknown ${fmtInt(unknown)}` }),
-    ]),
-    el('div', { class: 'facet-legend' }, [
-      facetKey('valid', valid, all, 'var(--ok)'),
-      facetKey('invalid', invalid, all, 'var(--fail)'),
-      facetKey('unknown', unknown, all, 'var(--silent)'),
-    ]),
-    el('p', { class: 'tbl-note', text: 'one verdict per announced prefix and origin, from the newest parse of each file' })
-  );
-  return wrap;
-}
-
+/// The attribute mix is folded into the collector view from the same file index the rest of the
+/// page reads, so no extra service is involved.
 function renderAttributeMix(data) {
   const rows = (Array.isArray(data.data) ? [...data.data] : [])
     .filter((row) => num(row.instances) > 0)
