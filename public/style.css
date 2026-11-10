@@ -1450,7 +1450,20 @@ col.rf-open { width: 10%; }
 .chart-name { display: flex; flex-direction: column; gap: 1px; padding-bottom: 10px; }
 .chart-proj { font: 10px/1.4 var(--mono); color: var(--ink-2); }
 .chart-count { font: 9px/1.4 var(--mono); color: var(--faint); white-space: nowrap; }
-.chart-bars { display: flex; align-items: flex-end; gap: 1px; height: 72px; border-bottom: 1px solid var(--rule-2); }
+/* The plot has its own surface and its own grid. On the page's cream background an unbordered area
+   of bars floats: a reader cannot tell where zero is, and the panel colour was too close to the page
+   to read as a plot at all. */
+.chart-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  height: 72px;
+  padding: 0 2px;
+  border: 1px solid var(--rule-2);
+  border-radius: 2px;
+  background-color: var(--paper-2);
+  background-image: repeating-linear-gradient(to top, var(--rule) 0 1px, transparent 1px 25%);
+}
 .chart-bar {
   flex: 1 1 0;
   min-width: 1px;

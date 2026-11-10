@@ -620,9 +620,34 @@ function buildModel() {
     tile.health = healthOf(tile);
   }
 
+  applyLedgerState(tiles);
   state.tiles = [...tiles.values()].sort(tileOrder);
   state.byName = tiles;
+}
 
+/// The alert ledger is the authority on collector state, so a tile may not call a collector "late"
+/// while an open alert for the same collector says updates stopped. The page's own rule reads a
+/// 24-hour window and cannot see a three-hour silence as anything worse than late; the ledger can.
+/// Failing, retired and no-file tiles keep their own verdict, because they describe something the
+/// ledger does not.
+function applyLedgerState(tiles) {
+  const source = state.sources.upstreamAlerts;
+  const rows = source && !source.error && source.data && Array.isArray(source.data.data) ? source.data.data : [];
+  const level = new Map();
+  for (const row of rows) {
+    if (row.state === 'resolved' || row.state === 'superseded') continue;
+    if (row.severity === 'critical') level.set(row.collector, 'critical');
+    else if (!level.has(row.collector)) level.set(row.collector, 'warning');
+  }
+  for (const tile of tiles.values()) {
+    const seen = level.get(tile.name);
+    if (!seen) continue;
+    if (seen === 'critical' && (tile.health === 'ok' || tile.health === 'late' || tile.health === 'partial')) {
+      tile.health = 'stopped';
+    } else if (seen === 'warning' && (tile.health === 'ok' || tile.health === 'late')) {
+      tile.health = 'late';
+    }
+  }
 }
 
 /* ---------- header ---------- */

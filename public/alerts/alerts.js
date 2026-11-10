@@ -226,15 +226,34 @@ function renderChart() {
 
     // The axis rides the same grid as the rows, so the ticks line up with the bars whatever width
     // the row-end label takes.
-    host.replaceChildren(
-        ...rows,
-        el('div', { class: 'chart-row chart-axis' }, [
-            el('span', { class: 'chart-name' }),
-            el('div', { class: 'chart-hours' }, ticks),
-        ])
-    );
+    const axisNode = el('div', { class: 'chart-row chart-axis' }, [
+        el('span', { class: 'chart-name' }),
+        el('div', { class: 'chart-hours' }, ticks),
+    ]);
+    host.replaceChildren(...rows, axisNode);
+    // Drop labels that would collide, measured after layout: a computed step cannot know how wide
+    // the rendered text is, and on a phone every twelfth bucket is twenty pixels apart.
+    thinTicks(axisNode);
     if (note) {
         note.textContent = `peak ${peak} collector${peak === 1 ? '' : 's'} · ${axis.length} × ${stepMinutes} min · UTC`;
+    }
+}
+
+/// Keep the first and last tick, then keep a middle tick only while it clears the last kept one. The
+/// result depends on the width actually available, so it reads correctly at any viewport.
+function thinTicks(axisNode) {
+    const cells = [...axisNode.querySelectorAll('.chart-hour')].filter((cell) => cell.firstElementChild);
+    if (cells.length < 3) return;
+    const first = cells[0].firstElementChild.getBoundingClientRect();
+    const last = cells[cells.length - 1].firstElementChild.getBoundingClientRect();
+    let keptRight = first.right;
+    for (let i = 1; i < cells.length - 1; i += 1) {
+        const rect = cells[i].firstElementChild.getBoundingClientRect();
+        if (rect.left >= keptRight + 8 && rect.right <= last.left - 8) {
+            keptRight = rect.right;
+            continue;
+        }
+        cells[i].firstElementChild.remove();
     }
 }
 
