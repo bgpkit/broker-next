@@ -68,7 +68,10 @@ function what(alert) {
 }
 
 function alertItem(alert) {
-  const sinceMs = Date.parse(alert.onset);
+  // Silence runs from the end of the newest file's window, which is what the ledger measured; the
+  // file's own timestamp is a cadence earlier.
+  const silentFrom = alert.detail && alert.detail.covered_until ? alert.detail.covered_until : alert.onset;
+  const sinceMs = Date.parse(silentFrom);
   const age = Number.isFinite(sinceMs) ? (Date.now() - sinceMs) / 60000 : null;
   const closed = alert.state === 'resolved' || alert.state === 'superseded';
   const level = severity(alert);
@@ -83,7 +86,7 @@ function alertItem(alert) {
     el('p', { class: 'meta' }, [
       document.createTextNode('last file '),
       el('span', { class: 'age', text: stampWords(alert.onset) }),
-      document.createTextNode(' · '),
+      document.createTextNode(' · silent '),
       el('span', { class: 'age', text: ageWords(age) }),
       document.createTextNode(' · '),
       el('a', { href: permalink(alert), text: 'record' }),

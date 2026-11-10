@@ -877,12 +877,15 @@ function upstreamAlertRows() {
   return ledger
     .filter((row) => row.state !== 'resolved' && row.state !== 'superseded')
     .map((row) => {
-      const sinceMs = Date.parse(row.onset);
+      // Silence starts when the newest file's window ends, not at the file's timestamp.
+      const from = row.detail && row.detail.covered_until ? row.detail.covered_until : row.onset;
+      const sinceMs = Date.parse(from);
       return {
         name: row.collector,
         severity: alertSeverity(row),
         words: alertWords(row),
         since: row.onset,
+        silentFrom: from,
         ageMin: Number.isFinite(sinceMs) ? (Date.now() - sinceMs) / 60000 : null,
       };
     })
