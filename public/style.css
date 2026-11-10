@@ -1412,6 +1412,12 @@ col.rf-open { width: 10%; }
 .alert-item .line .state { color: var(--fail); }
 .alert-item .line .state.is-resolved { color: var(--ok); }
 .alert-item .line .state.is-superseded { color: var(--stale); }
+/* Two tiers that differ in shape, not only in hue: critical is a filled badge on a row with a dark
+   edge, warning is an outlined badge on a plain row. At phone width the outline and the weight do
+   the separation that colour alone was not doing. */
+.alert-item.is-critical { border-left: 2px solid #6f1a10; padding-left: 8px; }
+.alert-item.is-warning { border-left: 2px solid transparent; padding-left: 8px; }
+.alert-item.is-closed.is-critical { border-left-color: var(--rule-2); }
 .alert-item .line .sev {
   margin-right: 6px;
   padding: 0 5px;
@@ -1420,8 +1426,16 @@ col.rf-open { width: 10%; }
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
-.alert-item .line .sev.is-critical { color: var(--fail); }
-.alert-item .line .sev.is-warning { color: var(--stale); }
+.alert-item .line .sev.is-critical {
+  background: #6f1a10;
+  border-color: #6f1a10;
+  color: #fbfaf5;
+}
+.alert-item .line .sev.is-warning {
+  background: transparent;
+  border-color: #e9a227;
+  color: #8a5306;
+}
 .alert-item .meta { margin: 2px 0 0; font: 10px/1.6 var(--mono); color: var(--faint); }
 .alert-item .meta a { color: var(--muted); }
 .alert-item .meta .age { color: var(--ink-2); }
@@ -1434,12 +1448,6 @@ col.rf-open { width: 10%; }
 .chart { display: flex; flex-direction: column; gap: 8px; }
 .chart-row { display: grid; grid-template-columns: 18ch 1fr; gap: 8px; align-items: end; }
 .chart-name { display: flex; flex-direction: column; gap: 1px; padding-bottom: 10px; }
-.chart-lane { font: 9px/1.2 var(--mono); color: var(--faint); padding-bottom: 2px; }
-.chart-row.is-head { align-items: start; }
-.chart-row.is-head .chart-name { padding-bottom: 2px; }
-.chart-row.is-lane .chart-lane { text-align: right; padding-right: 6px; }
-.chart-bars.is-lane { height: 26px; border-bottom: 0; }
-.chart-row.is-lane + .chart-row.is-lane .chart-bars.is-lane { border-top: 1px solid var(--rule); }
 .chart-proj { font: 10px/1.4 var(--mono); color: var(--ink-2); }
 .chart-count { font: 9px/1.4 var(--mono); color: var(--faint); white-space: nowrap; }
 .chart-bars { display: flex; align-items: flex-end; gap: 1px; height: 72px; border-bottom: 1px solid var(--rule-2); }
@@ -1453,18 +1461,10 @@ col.rf-open { width: 10%; }
   justify-content: flex-end;
   background: linear-gradient(to top, var(--panel-sunk), var(--panel-sunk));
 }
-/* The two tiers have to be told apart at two pixels wide, where a hue difference alone disappears.
-   Critical is the darkest thing on the page and warning is a bright amber, so the split is carried by
-   lightness as well as hue, and a hairline of panel colour keeps the boundary visible when both are
-   stacked. */
-.chart-bar .crit {
-  background: #6f1a10;
-  display: block;
-  box-shadow: 0 -1px 0 var(--panel);
-}
 .chart-bar .warn { background: #e9a227; display: block; }
-.chart-bar:hover .crit { background: #8c2314; }
+.chart-bar .crit { background: #6f1a10; display: block; box-shadow: 0 -1px 0 var(--panel); }
 .chart-bar:hover .warn { background: #f2b24a; }
+.chart-bar:hover .crit { background: #8c2314; }
 .chart-hours { display: flex; gap: 1px; min-width: 0; overflow: visible; }
 .chart-axis { align-items: start; }
 .chart-hour {
