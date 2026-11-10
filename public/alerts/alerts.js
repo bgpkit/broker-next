@@ -92,7 +92,7 @@ function streamLine(row) {
     el('span', { class: 'stream-name', text: stream }),
     // The first column already names the stream, so the second only carries what happened to it.
     el('span', { class: closed ? (row.state === 'resolved' ? 'stream-state is-resolved' : 'stream-state is-superseded') : 'stream-state', text: what(row).replace(/^(updates|RIB dumps) /, '') }),
-    el('span', { class: 'stream-time', text: `last file ${stampWords(row.onset)} · silent ${ageWords(age)}` }),
+    el('span', { class: 'stream-time', text: `last file ${stampWords(row.onset)} · ${ageWords(age)}` }),
     el('a', { class: 'stream-record', href: permalink(row), text: 'record' }),
   ]);
 }
@@ -315,7 +315,12 @@ function render() {
 async function load() {
   const [ledger, chart] = await Promise.allSettled([
     fetch(`${API}/v4/meta/alerts`, { headers: { accept: 'application/json' } }),
-    fetch(`${API}/v4/meta/alerts/series?hours=24&bucket_minutes=5`, { headers: { accept: 'application/json' } }),
+    // Five-minute buckets are 288 bars: on a phone each bar is narrower than the gap between bars,
+    // so the plot needs a wider canvas than the screen has. A quarter-hour bucket keeps the shape
+    // and fits.
+    fetch(`${API}/v4/meta/alerts/series?hours=24&bucket_minutes=${window.innerWidth < 640 ? 15 : 5}`, {
+      headers: { accept: 'application/json' },
+    }),
   ]);
   try {
     if (ledger.status !== 'fulfilled' || !ledger.value.ok) throw new Error(`HTTP ${ledger.value && ledger.value.status}`);
