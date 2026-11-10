@@ -52,6 +52,14 @@ function severity(alert) {
   return String(alert.condition || '').endsWith('_late') ? 'warning' : 'critical';
 }
 
+/// Only `firing` is a claim about now. `pending` has been true once and `held` never became true;
+/// `recovering` says the archive published again and the alert is confirming that. The status page
+/// counts open alerts by this rule, so this page counts the same rows or the two surfaces disagree
+/// about a ledger row a reader can see on both.
+function isOpen(alert) {
+  return alert.state === 'firing' || alert.state === 'recovering';
+}
+
 /// The state machine says `firing`; what that means depends on the tier: a firing critical alert is
 /// a stopped archive, a firing warning is a collector running behind. A closed row says how it
 /// closed, because a warning that escalated did not recover.
@@ -62,8 +70,10 @@ function what(alert) {
   if (alert.state === 'resolved') word = 'resumed';
   else if (alert.state === 'superseded') word = 'escalated to stopped';
   else if (alert.state === 'recovering') word = level === 'warning' ? 'back on schedule' : 'resumed';
-  else if (level === 'warning') word = 'late';
-  else word = alert.state === 'firing' ? 'stopped' : alert.state;
+  else if (alert.state === 'firing') word = level === 'warning' ? 'late' : 'stopped';
+  // A candidate is one evaluation, not a claim: saying "late" here would print a confirmed-sounding
+  // word over a row that has never fired.
+  else word = 'candidate, not published';
   return `${stream} ${word}`;
 }
 
@@ -97,12 +107,14 @@ function streamLine(row) {
       document.createTextNode(' · '),
       el('a', { class: 'stream-json', href: permalink(row), text: 'json' }),
     ]),
-    el('span', { class: 'stream-time', text: `last file ${stampWords(row.onset)} · ${ageWords(age)}` }),
+    // The stamp and the age under it are one instant: coverage stops at `covered_until`, so an age
+    // counted from there beside a stamp of `onset` differs by a whole file window.
+    el('span', { class: 'stream-time', text: `last file ${stampWords(from)} · ${ageWords(age)}` }),
   ]);
 }
 
 function collectorItem(rows) {
-  const open = rows.filter((row) => row.state !== 'resolved' && row.state !== 'superseded');
+  const open = rows.filter(isOpen);
   const closed = open.length === 0;
   const level = rows.some((row) => severity(row) === 'critical') ? 'critical' : 'warning';
   const count = rows.length;
@@ -173,7 +185,7 @@ function liveCounts(project) {
     let warning = 0;
     for (const row of alerts) {
         if (row.project !== project) continue;
-        if (row.state === 'resolved' || row.state === 'superseded') continue;
+        if (!isOpen(row)) continue;
         if (severity(row) === 'critical') critical += 1;
         else warning += 1;
     }
@@ -311,14 +323,21 @@ function render() {
   const rank = { critical: 0, warning: 1 };
   const bySeverity = (a, b) => (rank[severity(a)] ?? 9) - (rank[severity(b)] ?? 9);
   const isClosed = (alert) => alert.state === 'resolved' || alert.state === 'superseded';
-  const open = alerts.filter((alert) => !isClosed(alert)).sort(bySeverity);
+  const open = alerts.filter(isOpen).sort(bySeverity);
+  // A candidate is not an open alert, but it is not history either: it sits at the end of the open
+  // list, uncounted in the heading, so a collector on its way to firing is visible without being
+  // announced as a confirmed claim.
+  const candidates = alerts.filter((alert) => !isClosed(alert) && !isOpen(alert)).sort(bySeverity);
   const closed = alerts.filter(isClosed).sort(bySeverity);
 
-  fill('open', open, 'No collector is behind its threshold.');
+  fill('open', [...open, ...candidates], 'No collector is behind its threshold.');
   fill('resolved', closed, 'Nothing closed in the last 30 days.');
   const openTitle = document.getElementById('open-title');
   const closedTitle = document.getElementById('resolved-title');
-  if (openTitle) openTitle.textContent = open.length ? `Open now · ${open.length}` : 'Open now';
+  if (openTitle) {
+    const count = open.length ? `Open now · ${open.length}` : 'Open now';
+    openTitle.textContent = candidates.length ? `${count} · ${candidates.length} candidate` : count;
+  }
   if (closedTitle) closedTitle.textContent = closed.length ? `Closed in the last 30 days · ${closed.length}` : 'Closed in the last 30 days';
   fillCollectorCard(open);
   renderChart();

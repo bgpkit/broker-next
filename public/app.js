@@ -137,6 +137,39 @@ function appendChildren(node, children) {
   }
 }
 
+/// An age printed from a stored instant. The text is what the page shows on load; `data-age-from` is
+/// what lets the minute timer recompute it, because a number that was true when the page loaded is
+/// the failure the owner sees first ("stopped 3h" an hour later).
+function ageMinutesFrom(from) {
+  if (!from) return null;
+  const ms = asUtc(from).getTime();
+  return Number.isFinite(ms) ? Math.max(0, (Date.now() - ms) / 60000) : null;
+}
+
+function describeAge(from, format) {
+  const minutes = ageMinutesFrom(from);
+  if (minutes === null) return '—';
+  if (format === 'words') return `${fmtAge(minutes)} ago`;
+  if (format === 'old') return `${fmtAge(minutes)} old`;
+  return shortAge(minutes);
+}
+
+function ageNode(from, format) {
+  return el('span', {
+    'data-age-from': from || '',
+    'data-age-format': format || 'short',
+    text: describeAge(from, format),
+  });
+}
+
+function refreshAges() {
+  for (const node of document.querySelectorAll('[data-age-from]')) {
+    const from = node.getAttribute('data-age-from');
+    if (!from) continue;
+    node.textContent = describeAge(from, node.getAttribute('data-age-format'));
+  }
+}
+
 /* ---------- format helpers ---------- */
 
 function num(value) {
@@ -404,9 +437,14 @@ function healthOf(tile) {
 }
 
 /// A state word plus the one number that explains it where that number exists. "stopped 2d" says
-/// both what happened and how long ago, which a bare "stopped" leaves the reader to look up.
+/// both what happened and how long ago, which a bare "stopped" leaves the reader to look up. When
+/// the ledger supplied the verdict, the number is the ledger's own silence, in the ledger's stream.
 function stateLabel(tile) {
-  if (tile.health === 'stopped' && tile.updateAgeMin !== null) return `stopped ${shortAge(tile.updateAgeMin)}`;
+  if (tile.health === 'stopped') {
+    const minutes = alertAgeMin(tile);
+    if (minutes !== null) return `stopped ${shortAge(minutes)}`;
+    if (tile.updateAgeMin !== null) return `stopped ${shortAge(tile.updateAgeMin)}`;
+  }
   return HEALTH[tile.health].label;
 }
 
@@ -642,24 +680,71 @@ function buildModel() {
 /// 24-hour window and cannot see a three-hour silence as anything worse than late; the ledger can.
 /// Failing, retired and no-file tiles keep their own verdict, because they describe something the
 /// ledger does not.
+///
+/// Only a `firing` row is a claim about now. `pending` has not been confirmed by a second
+/// evaluation, and `recovering` says the source is publishing again; letting either one turn a tile
+/// red is how one collector showed a 29-hour RIB stop while its updates were fourteen minutes old
+/// and a `late` warning for the same RIB stream sat beside it.
 function applyLedgerState(tiles) {
   const source = state.sources.upstreamAlerts;
   const rows = source && !source.error && source.data && Array.isArray(source.data.data) ? source.data.data : [];
   const level = new Map();
   for (const row of rows) {
-    if (row.state === 'resolved' || row.state === 'superseded') continue;
-    if (row.severity === 'critical') level.set(row.collector, 'critical');
-    else if (!level.has(row.collector)) level.set(row.collector, 'warning');
+    if (row.state !== 'firing') continue;
+    const severity = row.severity === 'critical' ? 'critical' : 'warning';
+    const current = level.get(row.collector);
+    // Critical outranks warning for one collector; two rows of the same tier keep the older onset,
+    // which is the longer silence and the one a reader is looking for. `asUtc` is the only place
+    // that decides what a zone-less timestamp means.
+    if (!current || (severity === 'critical' && current.severity !== 'critical') ||
+        (severity === current.severity && asUtc(row.onset).getTime() < asUtc(current.row.onset).getTime())) {
+      level.set(row.collector, { severity, row });
+    }
   }
   for (const tile of tiles.values()) {
     const seen = level.get(tile.name);
     if (!seen) continue;
-    if (seen === 'critical' && (tile.health === 'ok' || tile.health === 'late' || tile.health === 'partial')) {
-      tile.health = 'stopped';
-    } else if (seen === 'warning' && (tile.health === 'ok' || tile.health === 'late')) {
+    // `unknown` is a page-side state: the counts response that every page verdict rests on never
+    // arrived. The ledger's rows are built from the broker's own newest-file table, not from that
+    // response, so a firing row is still evidence and outranks a missing measurement.
+    const pageVerdict = tile.health === 'unknown';
+    if (seen.severity === 'critical') {
+      if (tile.health === 'ok' || tile.health === 'late' || tile.health === 'partial' || pageVerdict) {
+        tile.health = 'stopped';
+        tile.alert = seen.row;
+      } else if (tile.health === 'stopped') {
+        // The page's own rule already called it stopped (no file in 24h). The ledger says the same
+        // thing with a stream and a timestamp, so keep it as the explanation instead of printing a
+        // number from the other stream.
+        tile.alert = seen.row;
+      }
+    } else if (tile.health === 'ok' || tile.health === 'late' || pageVerdict) {
       tile.health = 'late';
+      tile.alert = seen.row;
     }
   }
+}
+
+/// The instant the alert's silence runs from: the end of the newest file it holds, which is what the
+/// ledger measured, not the file's name.
+function alertSilenceStart(row) {
+  const detail = row && row.detail ? row.detail : {};
+  return detail.covered_until || (row && row.onset) || null;
+}
+
+/// How long the claim the tile is showing has been true. A tile that took its verdict from a RIB
+/// alert must not print the updates age: "stopped 13m" under a 29-hour stop is two facts glued
+/// together.
+function alertAgeMin(tile) {
+  if (!tile.alert) return null;
+  const from = alertSilenceStart(tile.alert);
+  if (!from) return null;
+  const ms = asUtc(from).getTime();
+  return Number.isFinite(ms) ? Math.max(0, (Date.now() - ms) / 60000) : null;
+}
+
+function alertStreamName(tile) {
+  return tile.alert && tile.alert.data_type === 'rib' ? 'RIB dumps' : 'updates';
 }
 
 /* ---------- header ---------- */
@@ -864,8 +949,10 @@ function alertWords(alert) {
   let word;
   if (alert.state === 'resolved') word = 'resolved';
   else if (alert.state === 'recovering') word = level === 'warning' ? 'back on schedule' : 'resumed';
-  else if (level === 'warning') word = 'late';
-  else word = alert.state === 'firing' ? 'stopped' : alert.state;
+  else if (alert.state === 'firing') word = level === 'warning' ? 'late' : 'stopped';
+  // A pending or held row is one evaluation, not a claim: say so instead of borrowing the word the
+  // firing tier uses.
+  else word = alert.state;
   return `${stream} ${word}`;
 }
 
@@ -887,16 +974,19 @@ function upstreamAlertRows() {
   // that recovered is not an alert any more, and putting it here would make the page disagree with
   // the tile beside it.
   return ledger
-    .filter((row) => row.state !== 'resolved' && row.state !== 'superseded')
+    .filter((row) => row.state === 'firing' || row.state === 'recovering')
     .map((row) => {
       // Silence starts when the newest file's window ends, not at the file's timestamp.
       const from = row.detail && row.detail.covered_until ? row.detail.covered_until : row.onset;
-      const sinceMs = Date.parse(from);
+      const sinceMs = asUtc(from).getTime();
       return {
         name: row.collector,
         severity: alertSeverity(row),
         words: alertWords(row),
-        since: row.onset,
+        // The stamp and the age under it are one instant: the end of the newest file's window, which
+        // is what the ledger measured. Printing the onset beside an age counted from `covered_until`
+        // shows a timestamp and a duration that differ by a whole file window.
+        since: from,
         silentFrom: from,
         ageMin: Number.isFinite(sinceMs) ? (Date.now() - sinceMs) / 60000 : null,
       };
@@ -964,6 +1054,18 @@ function keepAlertStripCurrent() {
   alertStripTimer = setInterval(() => {
     if (document.hidden) return;
     renderUpstreamAlerts();
+    // Every age the page printed from a stored instant, including the ones inside the open drawer:
+    // redrawing the grid would re-render numbers computed at load, and it also throws away the
+    // focused tile, so the ages are refreshed in place instead.
+    refreshAges();
+    // The open drawer is keyed by the collector name it printed, so read the tile back from the
+    // same map the hash uses instead of keeping a second copy of the open state.
+    const drawer = $('#detail');
+    const openName = drawer && drawer.dataset.open === 'true' ? $('#detail-title').textContent : '';
+    const openTile = openName ? state.byName.get(openName) : null;
+    if (openTile) {
+      $('#detail-sub').textContent = `${openTile.project || 'not in catalog'} · ${openTile.country || '—'} · ${stateLabel(openTile)}`;
+    }
   }, 60000);
 }
 
@@ -1075,7 +1177,10 @@ function tileEl(tile) {
     class: 'tile-ages',
     title: 'age of the newest updates file and the newest RIB file',
   }, [
-    el('span', { text: `updates ${shortAge(tile.updateAgeMin)} · RIB ${shortAge(tile.ribAgeMin)}` }),
+    el('span', { text: 'updates ' }),
+    ageNode(tile.newestUpdate && tile.newestUpdate.ts_start, 'short'),
+    el('span', { text: ' · RIB ' }),
+    ageNode(tile.newestRib && tile.newestRib.ts_start, 'short'),
   ]));
   const props = {
     class: 'tile',
@@ -1851,25 +1956,40 @@ function kvRow(label, value) {
   return el('div', { class: 'kv-row' }, [el('dt', { text: label }), dd]);
 }
 
-function statusNode(tile) {
+/// How long the newest file has been missing, as nodes: the age is recomputed by the minute timer
+/// from the instant the ledger measured, so a drawer left open does not freeze at load.
+function statusNote(tile) {
+  if (tile.alert) {
+    const from = alertSilenceStart(tile.alert);
+    return [`${alertStreamName(tile)} nothing since ${stampWords(from)}, `, ageNode(from, 'words')];
+  }
   const newest = tile.newestUpdate || tile.newestRib;
-  const ended = newest ? dayStamp(newest.ts_end || newest.ts_start) : null;
+  if (!newest) return 'nothing in the last 24h';
+  const from = newest.ts_end || newest.ts_start;
+  return [`nothing since ${dayStamp(from)}, `, ageNode(from, 'words')];
+}
+
+function statusNode(tile) {
   const notes = {
     ok: `${fmtInt(tile.files24)} files in the last 24h`,
     partial: 'a file from the last 24h did not parse',
-    late: staleReason(tile),
+    late: tile.alert ? statusNote(tile) : staleReason(tile),
     pending: `in the catalog since ${tile.activated ? dateOnly(tile.activated) : 'recently'}, no archive file yet`,
-    stopped: ended ? `nothing since ${ended}, ${fmtAge(tile.updateAgeMin)} ago` : 'nothing in the last 24h',
+    stopped: statusNote(tile),
     failing: `${fmtInt(tile.failed24)} of the files in the last 24h did not parse`,
     nofiles: tile.inCatalog ? 'in the catalog, never a file in the feed' : 'no file in the feed',
     legacy: 'publishes files under a name the catalog does not list, usually a rename',
     alias: tile.alias ? `same files as ${tile.alias}, published under the pre-rename path` : 'same files as another collector',
     retired: tile.deactivated ? `deactivated ${dateOnly(tile.deactivated)} in the catalog` : 'deactivated',
+    // The counts response behind every other note never arrived, so there is nothing to count.
+    unknown: 'counts did not arrive for this window',
   };
+  const detail = el('span', { class: 'muted' }, [el('span', { text: ' · ' })]);
+  appendChildren(detail, notes[tile.health]);
   return el('span', { class: 'status' }, [
     dotEl(tile.health),
     el('span', { text: stateLabel(tile) }),
-    el('span', { class: 'muted', text: ` · ${notes[tile.health]}` }),
+    detail,
   ]);
 }
 
@@ -2359,7 +2479,10 @@ const RECENT_ROWS = 20;
 /// the alerts page reads, so a reader never sees two versions of the same fact.
 function renderCollectorAlerts(target, data, name) {
   const rows = Array.isArray(data && data.data) ? data.data : [];
-  const open = rows.filter((row) => row.state !== 'resolved' && row.state !== 'superseded');
+  // A live claim is firing or recovering. A `pending` row is one true evaluation, published
+  // nowhere, and counting it as open is what made this card say "3 open" over two real ones.
+  const live = (row) => row.state === 'firing' || row.state === 'recovering';
+  const open = rows.filter(live);
   target.src.textContent = `alert ledger · ${fmtInt(rows.length)} in 30 days · ${fmtInt(open.length)} open`;
 
   if (!rows.length) {
@@ -2382,6 +2505,9 @@ function renderCollectorAlerts(target, data, name) {
     const stream = row.data_type === 'rib' ? 'RIB dumps' : 'updates';
     if (row.state === 'resolved') return `${stream} resumed`;
     if (row.state === 'superseded') return `${stream} late, escalated`;
+    if (row.state === 'recovering') return `${stream} resumed, closing`;
+    if (row.state === 'pending') return `${stream} candidate, not published`;
+    if (row.state === 'held') return `${stream} candidate, held by the storm gate`;
     if (row.severity === 'warning') return `${stream} late`;
     return `${stream} stopped`;
   };
@@ -2621,10 +2747,11 @@ const issue = { health: null };
 /// 15 minutes and at 8 hours.
 function issueFeedLine(row, ageMin, cadenceMin) {
   if (!row) return 'nothing in the file feed';
-  const end = dayStamp(row.ts_end || row.ts_start);
-  const age = Number.isFinite(Number(ageMin)) ? ` · ${fmtAge(ageMin)} old` : '';
-  const cadence = cadenceMin ? ` · published every ${fmtCadence(cadenceMin)}` : '';
-  return `${end}${age}${cadence}`;
+  const from = row.ts_end || row.ts_start;
+  const parts = [dayStamp(from)];
+  if (Number.isFinite(Number(ageMin)) && from) parts.push(' · ', ageNode(from, 'old'));
+  if (cadenceMin) parts.push(` · published every ${fmtCadence(cadenceMin)}`);
+  return parts;
 }
 
 function issueDelivery(tile) {
@@ -2653,6 +2780,12 @@ function issueWhy(tile) {
     return `${fmtInt(tile.failed24)} file${num(tile.failed24) === 1 ? '' : 's'} from the last 24 hours did not parse; the rest arrived.`;
   }
   if (tile.health === 'stopped') {
+    // A verdict the ledger supplied belongs to one stream, so it is explained in that stream. The
+    // page's own rule would explain a RIB stop with the updates age and an estimate of missing
+    // updates files, which is a different claim wearing the same word.
+    if (tile.alert && alertAgeMin(tile) !== null) {
+      return `${alertStreamName(tile)} nothing since ${stampWords(alertSilenceStart(tile.alert))}, ${fmtAge(alertAgeMin(tile))} ago; the alert ledger measured that silence against this collector's own threshold.`;
+    }
     const newest = tile.newestUpdate || tile.newestRib;
     const cadence = cadenceOf(tile.project);
     if (!newest) return 'No file from this collector arrived in the last 24 hours.';
