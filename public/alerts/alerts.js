@@ -183,9 +183,11 @@ function renderChart() {
         const bars = axis.map(({ key, at }) => {
             const hit = lookup.get(`${project}|${key}`) || { critical: 0, warning: 0 };
             const label = `${stampWords(key)} · ${project} · ${hit.critical} critical, ${hit.warning} warning`;
+            // Stopped sits at the bottom: it is the slow-moving part of the picture, so the baseline
+            // stays still while the late segment moves above it.
             return el('div', { class: 'chart-bar', title: label }, [
-                hit.critical ? el('span', { class: 'crit', style: `height:${(hit.critical / top) * 100}%` }) : null,
                 hit.warning ? el('span', { class: 'warn', style: `height:${(hit.warning / top) * 100}%` }) : null,
+                hit.critical ? el('span', { class: 'crit', style: `height:${(hit.critical / top) * 100}%` }) : null,
             ]);
         });
         const name = project === 'route-views' ? 'route-views' : project === 'ripe-ris' ? 'ripe-ris' : project;
