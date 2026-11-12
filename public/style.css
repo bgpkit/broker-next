@@ -960,7 +960,7 @@ col.rf-open { width: 10%; }
 .project-cards { padding: 10px 14px 14px; display: flex; flex-direction: column; gap: 10px; }
 .project-card { border: 1px solid var(--rule); background: var(--panel-sunk); padding: 8px 10px; }
 .project-name {
-  font-size: 12px; }
+  font-size: 12px; display: flex; align-items: center; gap: 6px; }
 .project-name i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
 .project-row { display: flex; justify-content: space-between; font: 11.5px var(--mono); padding: 1px 0; color: var(--ink-2); }
 .project-k { color: var(--muted); }
