@@ -99,12 +99,60 @@
   /// a stopped archive, a firing warning is a collector running behind.
   function stateWord(row) {
     const level = severity(row);
+    // A link carries only the id, so the state is unknown until the record arrives; saying
+    // "candidate" in that window would publish a claim the ledger never made.
+    if (!row.state) return '';
     if (row.state === 'resolved') return 'resumed';
     if (row.state === 'superseded') return 'escalated to stopped';
     if (row.state === 'recovering') return 'resumed, closing';
     if (row.state === 'firing') return level === 'warning' ? 'late' : 'stopped';
     if (row.state === 'held') return 'candidate, held';
     return 'candidate, not published';
+  }
+
+  /// The canonical address of one alert as a page, not as an API record: the alerts page reads this
+  /// fragment on load and opens the dialog for the row it names.
+  function shareUrl(row) {
+    return `${location.origin}/alerts/#alert=${row.id}`;
+  }
+
+  /// Copying is how this leaves the browser, so it has to work when the async clipboard is refused:
+  /// fall back to a selected textarea, and if that also fails say so and print the URL rather than
+  /// claim a copy that did not happen.
+  async function copyLink() {
+    if (!state.row) return;
+    const url = shareUrl(state.row);
+    let copied = false;
+    try {
+      await navigator.clipboard.writeText(url);
+      copied = true;
+    } catch {
+      copied = legacyCopy(url);
+    }
+    state.copy.textContent = copied ? 'Copied' : 'Copy failed';
+    state.copy.classList.toggle('is-done', copied);
+    if (!copied) state.source.textContent = url;
+    clearTimeout(state.copyTimer);
+    state.copyTimer = setTimeout(() => {
+      state.copy.textContent = 'Copy link';
+      state.copy.classList.remove('is-done');
+      if (!copied) state.source.textContent = sourceLine();
+    }, 2400);
+  }
+
+  function legacyCopy(text) {
+    const area = el('textarea', { class: 'tl-copy-sink', 'aria-hidden': 'true', tabindex: '-1' });
+    area.value = text;
+    document.body.append(area);
+    area.select();
+    let ok = false;
+    try {
+      ok = document.execCommand('copy');
+    } catch {
+      ok = false;
+    }
+    area.remove();
+    return ok;
   }
 
   /// The permalink is the alert's stable identity: product, condition, collector, onset. Built from
@@ -147,6 +195,8 @@
     eyebrow: null,
     source: null,
     json: null,
+    copy: null,
+    copyTimer: null,
     row: null,
     full: null,
     error: null,
@@ -178,6 +228,15 @@
     state.body = el('div', { class: 'tl-body' });
     state.source = el('span', { text: 'alert ledger' });
     state.json = el('a', { href: '#', target: '_blank', rel: 'noreferrer', text: 'JSON record ↗' });
+    // The link names the alert itself, so a reader who receives it lands on this same timeline
+    // rather than on a page they then have to search.
+    state.copy = el('button', {
+      class: 'tl-copy',
+      type: 'button',
+      'aria-label': 'Copy a link to this alert timeline',
+      text: 'Copy link',
+    });
+    state.copy.addEventListener('click', copyLink);
 
     state.dialog = el('div', {
       class: 'tl',
@@ -187,7 +246,15 @@
       'aria-hidden': 'true',
       'data-open': 'false',
       tabindex: '-1',
-    }, [head, state.stats, state.body, el('footer', { class: 'tl-foot' }, [state.source, state.json])]);
+    }, [
+      head,
+      state.stats,
+      state.body,
+      el('footer', { class: 'tl-foot' }, [
+        state.source,
+        el('span', { class: 'tl-actions' }, [state.copy, state.json]),
+      ]),
+    ]);
 
     state.scrim = el('div', { class: 'tl-scrim', 'data-open': 'false', hidden: '' });
     state.scrim.addEventListener('click', shutdown);
@@ -247,6 +314,7 @@
     if (state.trigger && state.trigger.isConnected && typeof state.trigger.focus === 'function') {
       state.trigger.focus();
     }
+    document.dispatchEvent(new CustomEvent('alerttimeline:close', { detail: { id: state.row && state.row.id } }));
   }
 
   /* ---------- reading the record ---------- */
@@ -273,6 +341,9 @@
     show();
     if (state.body) state.body.setAttribute('aria-busy', 'true');
     render();
+    // The page owns the address bar: the alerts page turns this into #alert=<id> so the open dialog
+    // is the URL, and the status page keeps its own #<collector> fragment untouched.
+    document.dispatchEvent(new CustomEvent('alerttimeline:open', { detail: { id: row.id } }));
 
     const seq = state.seq;
     fetchRecord(row)
@@ -292,8 +363,10 @@
   /* ---------- rendering ---------- */
 
   function render() {
-    const row = state.row;
-    if (!row) return;
+    // The record wins over the row: a link carries nothing but the id, and the list row carries no
+    // transition history, so every field the record has replaces what the row said.
+    const row = Object.assign({}, state.row, state.full || {});
+    if (!row.id) return;
     const full = state.full;
     const level = severity(row);
 
@@ -301,12 +374,13 @@
     state.dialog.querySelector('#tl-title').textContent = row.collector;
     const reason = row.closed_reason || (full && full.closed_reason) || '';
     const reasonLine = reason && row.state !== 'superseded' ? `closed as ${reason}` : '';
+    const whatLine = [streamName(row), stateWord(row)].filter(Boolean).join(' ');
     state.sub.replaceChildren(
       el('span', { class: `tl-chip is-${level}`, text: level }),
       // The rest is a sentence, not a row of tabs: what the stream did, and how the row closed.
       el('span', {
         class: 'tl-sub-text',
-        text: [`${streamName(row)} ${stateWord(row)}`, reasonLine].filter(Boolean).join(' · '),
+        text: [whatLine, reasonLine].filter(Boolean).join(' · '),
       })
     );
 
@@ -460,7 +534,7 @@
     // An open alert's rail ends at now, so the reader sees the silence still running rather than a
     // line that stops at the last state change.
     let nowNode = null;
-    if (!isClosed(row) && Number.isFinite(startMs)) {
+    if (!isClosed(row) && Number.isFinite(startMs) && row.state) {
       const now = Date.now();
       nowNode = {
         at: now,
@@ -544,9 +618,16 @@
     state.body.setAttribute('aria-busy', 'false');
 
     state.json.href = permalink(row);
-    state.source.textContent = full
-      ? `alert.event · ${events.length} revision${events.length === 1 ? '' : 's'}${full.ruleset_version ? ` · ${full.ruleset_version}` : ''}`
-      : 'alert ledger row';
+    state.source.textContent = sourceLine();
+  }
+
+  /// What the footer says about where the timeline came from. A failed copy temporarily replaces it
+  /// with the URL, so it has to be rebuildable rather than written once.
+  function sourceLine() {
+    const full = state.full;
+    if (!full) return 'alert ledger row';
+    const count = Array.isArray(full.events) ? full.events.length : 0;
+    return `alert.event · ${count} revision${count === 1 ? '' : 's'}${full.ruleset_version ? ` · ${full.ruleset_version}` : ''}`;
   }
 
   function tick() {

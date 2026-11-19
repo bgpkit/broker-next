@@ -1943,14 +1943,46 @@ body.tl-open { overflow: hidden; }
   letter-spacing: 0.02em;
 }
 .tl-foot a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+/* The actions sit together at the right: a reader who wants the alert elsewhere should not have to
+   choose between two links that both leave the page. */
+.tl-actions { display: flex; align-items: center; gap: 10px; }
+.tl-copy {
+  font: 8.5px var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  background: var(--panel);
+  border: 1px solid var(--rule-2);
+  border-radius: 2px;
+  padding: 3px 8px;
+}
+.tl-copy:hover { border-color: var(--muted); color: var(--ink); }
+.tl-copy.is-done { border-color: var(--ok); color: var(--ok); }
+/* The copy fallback's textarea: it must be selectable but never seen or focusable. */
+.tl-copy-sink {
+  position: fixed;
+  left: -9999px;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
 
 @media (max-width: 560px) {
   .tl { width: 96vw; max-height: 92vh; }
   .tl-head { padding: 11px 14px 9px; }
   .tl-head h2 { font-size: 17px; }
-  .tl-stats { gap: 14px; padding: 9px 14px; }
+  /* Four measurements do not fit one phone line, and a wrapped stat keeps its divider: the rule
+     then hangs at the start of the second row and reads as a broken table. Space separates them
+     instead once the row is allowed to wrap. */
+  .tl-stats { gap: 10px 0; padding: 9px 14px; }
+  .tl-stat { padding: 0 16px; }
+  .tl-stat + .tl-stat { border-left: 0; }
   .tl-stat-value { font-size: 13px; }
-  .tl-body { padding: 12px 14px 4px; }
+  /* Leave the last line clear of the footer rule: the body scrolls, and content that ends flush
+     against the border reads as clipped. */
+  .tl-body { padding: 12px 14px 16px; }
   .tl-note { max-width: none; }
   .tl-foot { padding: 8px 14px; }
 }

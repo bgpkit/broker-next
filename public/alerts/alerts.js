@@ -88,28 +88,50 @@ function what(alert) {
   return `${stream} ${word}`;
 }
 
+/// The instant an episode ended, for ordering history: `resolved_at` when the record carries it,
+/// otherwise the last write, which is the write that closed the row (or the latest one, if open).
+function closedAt(row) {
+  const ms = Date.parse(row.resolved_at || row.updated_at || row.onset);
+  return Number.isFinite(ms) ? ms : 0;
+}
+
 /// One card per collector. A collector has two streams and they carry separate thresholds, so the
 /// same collector can be stopped on updates and only late on RIB dumps at the same moment; two rows
 /// apart make that look like two problems, one card makes it read as one collector with two facts.
-function groupByCollector(rows) {
+///
+/// The two lists order for different questions. What is open now is read by severity, critical
+/// first. History is read by time: a closed card sits where its newest close sits, so the list runs
+/// from the most recent recovery backwards, which is the order a reader scanning "what just
+/// happened" expects. Name is only a tie-breaker, because names carry no information about when.
+function groupByCollector(rows, byClose) {
   const byName = new Map();
   for (const row of rows) {
     if (!byName.has(row.collector)) byName.set(row.collector, []);
     byName.get(row.collector).push(row);
   }
   const worst = (list) => (list.some((row) => severity(row) === 'critical') ? 0 : 1);
-  return [...byName.values()].sort((a, b) => worst(a) - worst(b) || a[0].collector.localeCompare(b[0].collector));
+  const latest = (list) => Math.max(...list.map(closedAt));
+  return [...byName.values()].sort((a, b) => {
+    const byName_ = a[0].collector.localeCompare(b[0].collector);
+    if (byClose) return latest(b) - latest(a) || byName_;
+    return worst(a) - worst(b) || byName_;
+  });
 }
 
 function streamLine(row) {
   const level = severity(row);
   const closed = row.state === 'resolved' || row.state === 'superseded';
-  // Silence runs from the end of the newest file's window, which is what the ledger measured.
-  const from = row.detail && row.detail.covered_until ? row.detail.covered_until : row.onset;
-  const sinceMs = Date.parse(from);
-  const age = Number.isFinite(sinceMs) ? (Date.now() - sinceMs) / 60000 : null;
   const stream = row.data_type === 'rib' ? 'RIB dumps' : 'updates';
   const words = what(row).replace(/^(updates|RIB dumps) /, '');
+  // A closed row is read by when it ended; an open one by how long the archive has been quiet, and
+  // that silence runs from the end of the newest file's window, which is what the ledger measured.
+  const from = closed
+    ? row.resolved_at || row.updated_at || row.onset
+    : row.detail && row.detail.covered_until
+      ? row.detail.covered_until
+      : row.onset;
+  const sinceMs = Date.parse(from);
+  const age = Number.isFinite(sinceMs) ? (Date.now() - sinceMs) / 60000 : null;
   // The state words are the keyboard control; the row itself is the pointer target, so a tap
   // anywhere on the row opens the alert's timeline.
   const control = el('button', {
@@ -136,7 +158,7 @@ function streamLine(row) {
     ]),
     // The stamp and the age under it are one instant: coverage stops at `covered_until`, so an age
     // counted from there beside a stamp of `onset` differs by a whole file window.
-    el('span', { class: 'stream-time', text: `last file ${stampWords(from)} · ${ageWords(age)}` }),
+    el('span', { class: 'stream-time', text: `${closed ? 'closed' : 'last file'} ${stampWords(from)} · ${ageWords(age)}` }),
   ]);
   node.addEventListener('click', (event) => {
     // The json link and the control answer for themselves; anything else on the row opens the
@@ -147,7 +169,7 @@ function streamLine(row) {
   return node;
 }
 
-function collectorItem(rows) {
+function collectorItem(rows, byClose) {
   const open = rows.filter(isOpen);
   const closed = open.length === 0;
   const level = rows.some((row) => severity(row) === 'critical') ? 'critical' : 'warning';
@@ -158,6 +180,8 @@ function collectorItem(rows) {
       ? rows.map((row) => (row.data_type === 'rib' ? 'RIB dumps' : 'updates') + ' ' + what(row).replace(/^(updates|RIB dumps) /, '')).join(' · ')
       : `${open.length} open`;
   const ordered = rows.slice().sort((a, b) => {
+    // Inside a card, history reads newest close first for the same reason the cards do.
+    if (byClose) return closedAt(b) - closedAt(a);
     const rank = { critical: 0, warning: 1 };
     return (rank[severity(a)] ?? 9) - (rank[severity(b)] ?? 9) || a.data_type.localeCompare(b.data_type);
   });
@@ -178,7 +202,7 @@ function collectorItem(rows) {
   ]);
 }
 
-function fill(hostId, alerts, emptyText) {
+function fill(hostId, alerts, emptyText, byClose) {
   const host = document.getElementById(hostId);
   if (!host) return;
   host.replaceChildren();
@@ -187,7 +211,7 @@ function fill(hostId, alerts, emptyText) {
     host.dataset.count = '0';
     return;
   }
-  for (const rows of groupByCollector(alerts)) host.append(collectorItem(rows));
+  for (const rows of groupByCollector(alerts, byClose)) host.append(collectorItem(rows, byClose));
   // The list scrolls once it outgrows the viewport; the heading counter says how many rows are in it.
   host.dataset.count = String(alerts.length);
 }
@@ -365,14 +389,18 @@ function render() {
   const closed = alerts.filter(isClosed).sort(bySeverity);
 
   fill('open', [...open, ...candidates], 'No collector is behind its threshold.');
-  fill('resolved', closed, 'Nothing closed in the last 30 days.');
+  fill('resolved', closed, 'Nothing closed in the last 30 days.', true);
   const openTitle = document.getElementById('open-title');
   const closedTitle = document.getElementById('resolved-title');
   if (openTitle) {
     const count = open.length ? `Open now · ${open.length}` : 'Open now';
     openTitle.textContent = candidates.length ? `${count} · ${candidates.length} candidate` : count;
   }
-  if (closedTitle) closedTitle.textContent = closed.length ? `Closed in the last 30 days · ${closed.length}` : 'Closed in the last 30 days';
+  if (closedTitle) {
+    closedTitle.textContent = closed.length
+      ? `Closed in the last 30 days · ${closed.length} · newest first`
+      : 'Closed in the last 30 days';
+  }
   fillCollectorCard(open);
   renderChart();
 
@@ -424,3 +452,64 @@ setInterval(() => {
 setInterval(() => {
   if (!document.hidden) load();
 }, 60000);
+
+/* ---------- the alert in the address bar ---------- */
+
+// The shareable link for one alert is /alerts/#alert=<id>: the fragment names the ledger row, this
+// page opens that row on arrival, and the dialog's Copy link hands out exactly this URL. The status
+// page keeps its own #<collector> fragment, so only this page reads and writes the alert one.
+
+let hashBefore = '';
+
+/// A link can name an alert older than the 30-day list, or one that resolved a second ago and is not
+/// in this response yet. The id carries product, condition, collector and onset, which is enough to
+/// open the dialog and let its own record fetch supply the rest.
+function rowFromId(id) {
+  // The id is `product:condition:collector:<onset>`, and the onset itself contains colons, so the
+  // fields have to be cut from the left: splitting on ':' and popping from the end turns
+  // `...:2026-11-18T21:55:00Z` into a collector called "00".
+  const first = id.indexOf(':');
+  const second = id.indexOf(':', first + 1);
+  const third = id.indexOf(':', second + 1);
+  if (first < 0 || second < 0 || third < 0) return null;
+  const condition = id.slice(first + 1, second);
+  const collector = id.slice(second + 1, third);
+  const onset = id.slice(third + 1);
+  if (!/^\d{4}-\d\d-\d\dT\d\d:\d\d(:\d\d)?Z$/.test(onset)) return null;
+  return {
+    id: String(id),
+    condition,
+    collector,
+    onset,
+    project: '',
+    data_type: condition.startsWith('rib') ? 'rib' : 'updates',
+  };
+}
+
+function openFromHash() {
+  const match = /^#alert=(.+)$/.exec(location.hash);
+  if (!match || !window.AlertTimeline) return;
+  let id = match[1];
+  try {
+    id = decodeURIComponent(id);
+  } catch {
+    // A malformed escape is still the fragment the reader was given; use it as written.
+  }
+  const row = alerts.find((item) => item.id === id) || rowFromId(id);
+  if (row) window.AlertTimeline.open(row, null);
+}
+
+document.addEventListener('alerttimeline:open', (event) => {
+  const id = event.detail && event.detail.id;
+  if (!id) return;
+  if (!location.hash.startsWith('#alert=')) hashBefore = location.hash;
+  history.replaceState(null, '', `${location.pathname}#alert=${id}`);
+});
+
+document.addEventListener('alerttimeline:close', () => {
+  if (!location.hash.startsWith('#alert=')) return;
+  history.replaceState(null, '', `${location.pathname}${hashBefore}`);
+});
+
+window.addEventListener('hashchange', openFromHash);
+openFromHash();
