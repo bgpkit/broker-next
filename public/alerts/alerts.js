@@ -6,6 +6,14 @@
 
 const API = 'https://api.bgpkit.com';
 
+// The ledger and the chart series, kept between renders. They are declared here because the failure
+// path renders before the first successful assignment: an implicit global that never got assigned
+// throws inside render() and leaves the page showing its loading text next to the error it did print.
+let alerts = [];
+let series = [];
+let seriesMeta = {};
+let loadedAt = null;
+
 
 
 /// The same two shapes as the status page: how long ago, and the exact instant in UTC.
@@ -41,6 +49,9 @@ function el(tag, attrs = {}, children = []) {
   for (const [key, value] of Object.entries(attrs)) {
     if (value === null || value === undefined) continue;
     if (key === 'text') node.textContent = String(value);
+    // An `on*` prop is a listener, as on the status page: set as an attribute, a function lands in
+    // the markup as an inline handler that never runs.
+    else if (key.startsWith('on') && typeof value === 'function') node.addEventListener(key.slice(2), value);
     else node.setAttribute(key, String(value));
   }
   for (const child of children) if (child) node.append(child);
@@ -98,12 +109,28 @@ function streamLine(row) {
   const sinceMs = Date.parse(from);
   const age = Number.isFinite(sinceMs) ? (Date.now() - sinceMs) / 60000 : null;
   const stream = row.data_type === 'rib' ? 'RIB dumps' : 'updates';
-  return el('div', { class: `stream-row is-${level}${closed ? ' is-closed' : ''}` }, [
+  const words = what(row).replace(/^(updates|RIB dumps) /, '');
+  // The state words are the keyboard control; the row itself is the pointer target, so a tap
+  // anywhere on the row opens the alert's timeline.
+  const control = el('button', {
+    class: 'stream-open',
+    type: 'button',
+    'aria-label': `${stream} on ${row.collector}: ${words}. Open the alert timeline.`,
+    onclick: (event) => {
+      event.stopPropagation();
+      if (window.AlertTimeline) window.AlertTimeline.open(row, event.currentTarget);
+    },
+    text: words,
+  });
+  const node = el('div', {
+    class: `stream-row is-${level}${closed ? ' is-closed' : ''} is-openable`,
+    title: `${row.collector} · open the alert timeline`,
+  }, [
     el('span', { class: 'stream-name', text: stream }),
     // The first column names the stream, the second carries what happened to it plus its JSON
     // record, and the last line carries the timing. One row fewer than a separate link line.
     el('span', { class: closed ? (row.state === 'resolved' ? 'stream-state is-resolved' : 'stream-state is-superseded') : 'stream-state' }, [
-      document.createTextNode(what(row).replace(/^(updates|RIB dumps) /, '')),
+      control,
       document.createTextNode(' · '),
       el('a', { class: 'stream-json', href: permalink(row), text: 'json' }),
     ]),
@@ -111,6 +138,13 @@ function streamLine(row) {
     // counted from there beside a stamp of `onset` differs by a whole file window.
     el('span', { class: 'stream-time', text: `last file ${stampWords(from)} · ${ageWords(age)}` }),
   ]);
+  node.addEventListener('click', (event) => {
+    // The json link and the control answer for themselves; anything else on the row opens the
+    // same alert rather than swallowing the click.
+    if (event.target.closest('a, button')) return;
+    if (window.AlertTimeline) window.AlertTimeline.open(row, node);
+  });
+  return node;
 }
 
 function collectorItem(rows) {

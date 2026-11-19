@@ -2032,7 +2032,12 @@ function renderAttributeMix(data) {
     .sort((a, b) => num(b.instances) - num(a.instances))
     .slice(0, 6);
   const wrap = el('div', { class: 'facet facet-mix' });
-  if (!rows.length) return wrap;
+  // No rows is a fact about the window, not a reason to render nothing: an empty panel reads as a
+  // broken request, which is exactly what this panel used to show.
+  if (!rows.length) {
+    wrap.append(el('p', { class: 'muted', text: 'no attribute rows in this window' }));
+    return wrap;
+  }
 
   const max = num(rows[0].instances);
   wrap.append(el('p', { class: 'facet-title', text: 'attribute mix · instances seen' }));
@@ -2517,10 +2522,23 @@ function renderCollectorAlerts(target, data, name) {
       sorted.map((row) => {
         const since = Date.parse(row.onset);
         const age = Number.isFinite(since) ? (Date.now() - since) / 60000 : null;
+        const words = label(row);
+        // Each row opens the alert's own timeline: the same dialog the alerts page shows, so the
+        // two surfaces cannot describe one ledger row differently.
         return el('li', { class: `detail-alert is-${row.severity}${closed(row) ? ' is-closed' : ''}` }, [
-          el('span', { class: 'da-sev', text: row.severity }),
-          el('span', { class: 'da-what', text: label(row) }),
-          el('span', { class: 'da-when', text: `${stampWords(row.onset)} · ${ageWords(age)}` }),
+          el('button', {
+            class: 'da-open',
+            type: 'button',
+            title: `${row.collector} · ${words} · open the alert timeline`,
+            'aria-label': `${row.severity} ${words} on ${row.collector}. Open the alert timeline.`,
+            onclick: (event) => {
+              if (window.AlertTimeline) window.AlertTimeline.open(row, event.currentTarget);
+            },
+          }, [
+            el('span', { class: 'da-sev', text: row.severity }),
+            el('span', { class: 'da-what', text: words }),
+            el('span', { class: 'da-when', text: `${stampWords(row.onset)} · ${ageWords(age)}` }),
+          ]),
         ]);
       })
     )
@@ -2697,7 +2715,6 @@ function openDetail(name, trigger) {
     .then((data) => {
       if (seq !== state.detailSeq) return;
       renderDelivery(delivery, data, name, at, win.until);
-      facetBlocks.append(renderVerdictSplit(data, name));
     })
     .catch((error) => {
       if (seq === state.detailSeq) renderFailure(delivery, 'file processing index', error);
@@ -2707,7 +2724,11 @@ function openDetail(name, trigger) {
     .then((data) => {
       if (seq === state.detailSeq) facetBlocks.append(renderAttributeMix(data));
     })
-    .catch(() => { /* the mix is optional next to the verdict split */ });
+    // The mix is the whole of this panel now, so a failed request has to say so rather than leave
+    // the section sitting on "queued" forever.
+    .catch((error) => {
+      if (seq === state.detailSeq) renderFailure(facets, 'RPKI and attributes', error);
+    });
 
   // The file feed is fetched once at boot; the drawer only reads that response.
   const feed = state.sources.latest;
