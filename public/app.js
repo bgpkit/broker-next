@@ -3297,6 +3297,14 @@ function onKeydown(event) {
 
 /// Health always reads the fixed 24h window; when the page shows 24h that same response is the
 /// display data too, so the two queries collapse into one.
+///
+/// Day buckets, not hour buckets: every consumer of these rows sums them per collector (see
+/// sumRows), and the hourly breakdown is never read. The 24h hour-bucketed answer is 1872 rows /
+/// 620 KB and costs ~0.42 s in PostgreSQL; the same window at day granularity is 156 rows / 53 KB
+/// and ~0.31 s, because the hour grid multiplies every collector by 24 before the response is
+/// serialised. Summing day buckets gives the same totals (the window filter runs before the bin);
+/// the only arithmetic that can differ is missing_files, where the smaller per-bucket clamp is
+/// the more accurate of the two.
 function healthSpec() {
   const win = windowRange(WINDOWS['24h']);
   return {
@@ -3305,7 +3313,7 @@ function healthSpec() {
     params: {
       since: win.since,
       until: win.until,
-      bucket: 'hour',
+      bucket: 'day',
       dimension: 'collector',
     },
   };
@@ -3597,24 +3605,47 @@ async function boot() {
     { key: 'upstreamAlerts', path: '/v4/meta/alerts', params: {} },
   ];
 
-  const results = await Promise.all(specs.map(loadSource));
-  state.sources = Object.fromEntries(results.map((result) => [result.key, result]));
-  // The 24h window is the health window: one response serves both roles.
-  if (state.window === '24h') state.sources.aggregates = state.sources.health;
-  state.fetchedAt = new Date();
+  const paint = () => {
+    buildModel();
+    renderHeader();
+    renderStrip();
+    renderUpstreamAlerts();
+    keepAlertStripCurrent();
+    renderFleetChart();
+    renderRibChart();
+    renderProjects();
+    renderControls();
+    renderAlerts();
+    renderGrid();
+    renderLagPanel();
+  };
 
-  buildModel();
-  renderHeader();
-  renderStrip();
-  renderUpstreamAlerts();
-  keepAlertStripCurrent();
-  renderFleetChart();
-  renderRibChart();
-  renderProjects();
-  renderControls();
-  renderAlerts();
-  renderGrid();
-  renderLagPanel();
+  // Eight answers land at different times, and one of them (the 24-hour counts, ~0.6 MB) used to
+  // hold the whole page blank: every tile sat on "—" until the slowest response arrived. That is a
+  // second on a healthy day and several seconds whenever one aggregate overruns its budget, which
+  // is exactly what a reader reports as "the first load is very slow". The grid needs only the
+  // catalog and the counts, so paint as soon as those two are in and let the charts, the alert
+  // strip, the file feed and the archive calendar fill in afterwards. Every renderer already
+  // tolerates a missing source; a source that fails sets its own error and the tile says so.
+  const settled = new Set();
+  let paintedKeys = 0;
+  await Promise.all(specs.map((spec) => loadSource(spec).then((result) => {
+    state.sources[result.key] = result;
+    // The 24h window is the health window: one response serves both roles.
+    if (state.window === '24h' && result.key === 'health') state.sources.aggregates = result;
+    settled.add(result.key);
+    if (paintedKeys === 0 && settled.has('catalog') && settled.has('health')) {
+      paintedKeys = settled.size;
+      state.fetchedAt = new Date();
+      paint();
+      $('#grid').setAttribute('aria-busy', 'false');
+    }
+  })));
+
+  state.fetchedAt = new Date();
+  // A fast network settles every source before the first paint could have started; repainting then
+  // would redraw the same data, so only the arrivals after that paint are worth a second pass.
+  if (paintedKeys === 0 || settled.size > paintedKeys) paint();
 
   $('#grid').setAttribute('aria-busy', 'false');
   openFromHash();
