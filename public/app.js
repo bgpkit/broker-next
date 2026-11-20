@@ -967,8 +967,13 @@ function alertSeverity(row) {
 /// behind schedule. Both come from the ledger, so the page has no threshold of its own to disagree
 /// with it. Ranked by severity, then by how long the silence has lasted.
 function upstreamAlertRows() {
-  const source = state.sources.upstreamAlerts;
-  const ledger = source && !source.error && source.data && Array.isArray(source.data.data) ? source.data.data : [];
+  // Open is two states: firing, and recovering while the hysteresis window runs. They arrive as two
+  // requests, and a strip built from one of them would print a shorter list as though it were the
+  // whole one, so a missing or failed half means no strip at all — the same answer a failed ledger
+  // gives today.
+  const parts = [state.sources.upstreamAlerts, state.sources.upstreamRecovering];
+  if (parts.some((source) => !source || source.error || !source.data || !Array.isArray(source.data.data))) return [];
+  const ledger = parts.flatMap((source) => source.data.data);
   // The ledger answers with everything it closed in the last thirty days as well, because the
   // alerts page and the drawer need that history. The strip is what is open right now: a collector
   // that recovered is not an alert any more, and putting it here would make the page disagree with
@@ -3602,7 +3607,15 @@ async function boot() {
     // The alert ledger is point-in-time, like the file feed, and optional: without it the page
     // renders exactly as before. Alerts are what the archive did; incidents, which are our own
     // infrastructure, stay off this page entirely.
-    { key: 'upstreamAlerts', path: '/v4/meta/alerts', params: {} },
+    //
+    // Two requests, one per open state, because the deployed API narrows a single `state` per call
+    // and the alternative is the whole thirty-day ledger: 346 of its 360 rows are closures, and
+    // they were 328 KB of a 1.5 s first load to render four rows. `state` accepts a comma-separated
+    // list in the repository (bgpkit-api-workers, loadFeedAlerts), so this collapses to one request
+    // once that Worker is released. Both halves must arrive: a strip built from one of them would
+    // print a shorter list as though it were the whole one.
+    { key: 'upstreamAlerts', path: '/v4/meta/alerts', params: { state: 'firing' } },
+    { key: 'upstreamRecovering', path: '/v4/meta/alerts', params: { state: 'recovering' } },
   ];
 
   const paint = () => {
