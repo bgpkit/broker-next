@@ -126,16 +126,20 @@
       </section>
 
 
+      <!-- Collapsed by default: the calendar is a multi-year daily series, and asking for it on first
+           paint puts that request in front of the numbers this page exists to show. -->
       <section class="panel archive-panel" aria-labelledby="archive-title">
         <div class="panel-head">
           <h2 id="archive-title">Archive coverage</h2>
-          <div class="project-switch" id="archive-projects" role="group" aria-label="Archive project">
+          <div class="project-switch" id="archive-projects" role="group" aria-label="Archive project" hidden>
             <button type="button" data-project="ripe-ris" class="is-active">RIPE RIS</button>
             <button type="button" data-project="route-views">RouteViews</button>
           </div>
-          <p class="src" id="archive-src">archive calendar · waiting</p>
+          <p class="src" id="archive-src">archive calendar · not loaded</p>
+          <button type="button" id="archive-toggle" class="archive-toggle" aria-expanded="false"
+                  aria-controls="archive-body">Show</button>
         </div>
-        <div class="archive-body">
+        <div class="archive-body" id="archive-body" hidden>
           <p class="archive-summary" id="archive-summary">—</p>
           <p class="archive-note">one row per year, one cell per week, weeks left to right. The backfill works backwards from today, so complete weeks appear at the newest end first.</p>
           <div class="archive-grid" id="archive-grid" aria-busy="true"></div>

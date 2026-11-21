@@ -1581,6 +1581,19 @@ col.rf-open { width: 10%; }
 .archive-panel { margin-top: 14px; }
 
 .archive-body { padding: 10px 14px 12px; }
+.archive-body[hidden] { display: none; }
+.archive-toggle {
+  margin-left: auto;
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 10px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.archive-toggle:hover { opacity: 0.8; }
 
 .archive-summary {
   font: 11px var(--mono);

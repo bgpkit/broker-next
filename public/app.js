@@ -3369,7 +3369,7 @@ function windowSpecs(key) {
 
 /// Which project's archive calendar is on screen. Independent of the fleet window: the calendar is
 /// the whole history, not the last 24 hours, so switching the window must not reload it.
-const archive = { project: 'ripe-ris', data: null, error: null, at: null };
+const archive = { project: 'ripe-ris', data: null, error: null, at: null, loading: false };
 
 const ARCHIVE_LABEL = {
   'ripe-ris': 'RIPE RIS',
@@ -3549,6 +3549,7 @@ function renderArchive() {
 }
 
 async function loadArchive() {
+  archive.loading = true;
   const grid = $('#archive-grid');
   if (grid) grid.setAttribute('aria-busy', 'true');
   try {
@@ -3560,10 +3561,34 @@ async function loadArchive() {
     archive.data = null;
     archive.error = error && error.message ? error.message : String(error);
   }
+  archive.loading = false;
   renderArchive();
 }
 
+/// The calendar is behind a toggle and is fetched on the first open, not at boot: it is a multi-year
+/// daily series, and it used to sit in the critical path of a page whose job is the current numbers.
+function toggleArchive(open) {
+  const button = $('#archive-toggle');
+  const body = $('#archive-body');
+  const group = $('#archive-projects');
+  const src = $('#archive-src');
+  const next = typeof open === 'boolean' ? open : button.getAttribute('aria-expanded') !== 'true';
+  if (button) {
+    button.setAttribute('aria-expanded', String(next));
+    button.textContent = next ? 'Hide' : 'Show';
+  }
+  if (body) body.hidden = !next;
+  if (group) group.hidden = !next;
+  if (!next) {
+    if (src) src.textContent = 'archive calendar · hidden';
+    return;
+  }
+  if (archive.data === null && !archive.loading) void loadArchive();
+}
+
 function wireArchive() {
+  const toggle = $('#archive-toggle');
+  if (toggle) toggle.addEventListener('click', () => toggleArchive());
   const group = $('#archive-projects');
   if (!group) return;
   group.addEventListener('click', (event) => {
@@ -3655,7 +3680,6 @@ async function boot() {
 }
 
 wireArchive();
-void loadArchive();
 
 /// The lag figure comes from the file feed, not from the file index, so it survives a window
 /// switch: renderHeader resets the cell to "loading", this puts the value back.
